@@ -71,13 +71,16 @@ async function main() {
   addTargetLayer(map);
 
   // Map interactions
+  let suppressClick = false;
+
   map.on('click', (e) => {
-    // Single tap moves observer (avoids interfering with pan)
+    if (suppressClick) { suppressClick = false; return; }
     if (e.originalEvent && e.originalEvent.target && e.originalEvent.target.closest('#topbar, #info, #modes, #bottom, #search-results')) return;
     store.set({ observer: { lat: e.lngLat.lat, lon: e.lngLat.lng } });
   });
 
   attachLongPress(map, (lngLat) => {
+    suppressClick = true;
     store.set({ target: { lat: lngLat.lat, lon: lngLat.lng } });
     showToast('Target set — checking next alignment');
   });
