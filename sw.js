@@ -1,6 +1,6 @@
 // Minimal service worker: cache app shell, network-first for everything else.
 
-const CACHE = 'sun-v2-shell-v1';
+const CACHE = 'sun-v2-shell-v4';
 const SHELL = [
   './',
   './index.html',

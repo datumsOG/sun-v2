@@ -45,125 +45,13 @@
     box-shadow: var(--shadow);
   }
 
-  /* ===== Stage ===== */
-  #stage {
+  /* WebGL canvas fills the viewport */
+  #three {
     position: fixed;
     inset: 0;
-    perspective: 1200px;
-    perspective-origin: 50% 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transform-style: preserve-3d;
-  }
-
-  /* The horizon disc — gives a sense of ground plane */
-  #horizon {
-    position: absolute;
-    width: 80vmin;
-    height: 80vmin;
-    border-radius: 50%;
-    border: 1px solid rgba(255,255,255,0.06);
-    background:
-      radial-gradient(circle, rgba(255, 184, 69, 0.04) 0%, rgba(255, 184, 69, 0) 60%),
-      conic-gradient(from 0deg, rgba(255,255,255,0.04), rgba(255,255,255,0.0) 25%, rgba(255,255,255,0.04) 50%, rgba(255,255,255,0.0) 75%, rgba(255,255,255,0.04) 100%);
-    transform-style: preserve-3d;
-    transform: rotateX(70deg);
-  }
-  #horizon::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    border-radius: 50%;
-    border: 1px dashed rgba(255,255,255,0.08);
-    transform: scale(0.7);
-  }
-
-  /* Cardinal labels on the horizon */
-  .cardinal {
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    width: 24px; height: 24px;
-    margin: -12px 0 0 -12px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--text-faint);
-    pointer-events: none;
-  }
-
-  /* ===== The 3D arrow ===== */
-  #arrow-wrap {
-    position: relative;
-    width: 0; height: 0;
-    transform-style: preserve-3d;
-  }
-  #arrow {
-    position: absolute;
-    transform-style: preserve-3d;
-    transform-origin: 0 0 0;
-    will-change: transform;
-    pointer-events: none;
-  }
-  /* Arrow shaft */
-  .shaft {
-    position: absolute;
-    left: 0; top: 50%;
-    height: var(--w, 14px);
-    width: var(--len, 160px);
-    margin-top: calc(var(--w, 14px) / -2);
-    background: linear-gradient(90deg, rgba(255, 184, 69, 0.4), var(--gold) 30%, #fff1c2 70%, var(--gold));
-    border-radius: 999px;
-    box-shadow: 0 0 24px rgba(255, 184, 69, 0.45), 0 0 60px rgba(255, 184, 69, 0.18);
-    transform-style: preserve-3d;
-    transition: height 200ms ease;
-  }
-  .shaft.behind {
-    background: linear-gradient(90deg, rgba(77, 210, 255, 0.0), rgba(77, 210, 255, 0.5) 70%, rgba(77, 210, 255, 0.9));
-    box-shadow: 0 0 16px rgba(77, 210, 255, 0.35);
-    opacity: 0.55;
-  }
-  /* Arrow head (triangle made from CSS) */
-  .head {
-    position: absolute;
-    left: var(--len, 160px);
-    top: 50%;
-    width: 0; height: 0;
-    margin-top: calc(var(--head, 22px) * -1);
-    border-top: var(--head, 22px) solid transparent;
-    border-bottom: var(--head, 22px) solid transparent;
-    border-left: calc(var(--head, 22px) * 1.4) solid #fff1c2;
-    filter: drop-shadow(0 0 18px rgba(255, 184, 69, 0.55));
-    transition: border-top-width 200ms ease, border-bottom-width 200ms ease;
-  }
-  .shaft.behind ~ .head { border-left-color: #bbeeff; opacity: 0.7; }
-
-  /* Disc at base showing position certainty */
-  .base-disc {
-    position: absolute;
-    left: -22px; top: -22px;
-    width: 44px; height: 44px;
-    border-radius: 50%;
-    background: radial-gradient(circle, rgba(255,255,255,0.18), rgba(255,255,255,0) 70%);
-    border: 1.5px solid rgba(255, 184, 69, 0.6);
-  }
-
-  /* Sun-position dot in the sky (where the sun actually is in world frame, drawn as a small dot floating in 3D) */
-  #sun-dot {
-    position: absolute;
-    width: 28px; height: 28px;
-    margin: -14px 0 0 -14px;
-    left: 50%; top: 50%;
-    border-radius: 50%;
-    background: radial-gradient(circle at 35% 35%, #fff8db, #ffb845 60%, rgba(255, 94, 61, 0) 100%);
-    box-shadow: 0 0 30px rgba(255, 184, 69, 0.6), 0 0 80px rgba(255, 184, 69, 0.3);
-    transform-style: preserve-3d;
-    will-change: transform;
-    pointer-events: none;
-    transition: opacity 260ms ease;
+    width: 100%; height: 100%;
+    display: block;
+    touch-action: none;
   }
 
   /* ===== Top status panel ===== */
@@ -263,32 +151,10 @@
     padding: 24px 28px;
     max-width: 320px;
   }
-  #status h2 {
-    margin: 0 0 6px;
-    font-size: 18px;
-    font-weight: 600;
-  }
-  #status p {
-    margin: 0 0 14px;
-    color: var(--text-dim);
-    font-size: 13px;
-    line-height: 1.5;
-  }
+  #status h2 { margin: 0 0 6px; font-size: 18px; font-weight: 600; }
+  #status p { margin: 0 0 14px; color: var(--text-dim); font-size: 13px; line-height: 1.5; }
 
-  /* When sun is below horizon */
-  #night-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(11, 14, 20, 0.4);
-    pointer-events: none;
-    z-index: 1;
-    opacity: 0;
-    transition: opacity 400ms ease;
-  }
-  body.night #night-overlay { opacity: 1; }
-  body.night #sun-dot { opacity: 0.4; }
-
-  /* Aim hit indicator — pulses green when phone is pointing at the sun */
+  /* Aim hit ring (CSS overlay around screen center) */
   #aim-hit {
     position: fixed;
     top: 50%; left: 50%;
@@ -303,17 +169,14 @@
     transition: opacity 220ms ease, transform 220ms ease;
   }
   body.aimed #aim-hit { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
-  body.aimed #sun-dot { box-shadow: 0 0 60px rgba(255, 184, 69, 0.95), 0 0 140px rgba(255, 184, 69, 0.5); }
 
-  /* Lock indicator */
   #lock-ind {
     position: fixed;
     top: 50%; left: 50%;
     transform: translate(-50%, -50%);
     pointer-events: none;
     z-index: 4;
-    width: 60vmin;
-    height: 60vmin;
+    width: 60vmin; height: 60vmin;
     border-radius: 50%;
     border: 2px dashed rgba(255, 184, 69, 0.45);
     opacity: 0;
@@ -324,28 +187,20 @@
     0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.45; }
     50% { transform: translate(-50%, -50%) scale(1.04); opacity: 0.85; }
   }
+
+  /* When sun below horizon */
+  #night-overlay {
+    position: fixed; inset: 0;
+    background: rgba(11, 14, 20, 0.45);
+    pointer-events: none; z-index: 1;
+    opacity: 0; transition: opacity 400ms ease;
+  }
+  body.night #night-overlay { opacity: 1; }
 </style>
 </head>
 <body>
 
-<div id="stage">
-  <div id="horizon">
-    <div class="cardinal" id="card-n" style="transform: translate(0, calc(-40vmin)) rotateX(-70deg);">N</div>
-    <div class="cardinal" id="card-e" style="transform: translate(40vmin, 0) rotateX(-70deg);">E</div>
-    <div class="cardinal" id="card-s" style="transform: translate(0, 40vmin) rotateX(-70deg);">S</div>
-    <div class="cardinal" id="card-w" style="transform: translate(-40vmin, 0) rotateX(-70deg);">W</div>
-  </div>
-
-  <div id="arrow-wrap">
-    <div id="arrow">
-      <div class="base-disc" id="base-disc"></div>
-      <div class="shaft" id="shaft"></div>
-      <div class="head" id="head"></div>
-    </div>
-  </div>
-
-  <div id="sun-dot"></div>
-</div>
+<canvas id="three"></canvas>
 
 <div id="night-overlay"></div>
 <div id="aim-hit"></div>
@@ -378,45 +233,65 @@
 
 <section id="status" class="glass">
   <h2>3D sun arrow</h2>
-  <p>Stand outside, hold the phone naturally, then enable sensors. The arrow will point toward the sun in real space — the arrow gets thicker as compass uncertainty grows.</p>
+  <p>Stand outside, hold the phone naturally, then enable sensors. The arrow points at the sun in real space — its silhouette and shading change as it tilts.</p>
   <button id="status-ok" class="btn primary" style="height: 44px;">Got it</button>
 </section>
 
+<div id="errlog" style="position:fixed;left:8px;right:8px;bottom:8px;background:#3a0f0f;color:#ffdcdc;font:12px/1.4 monospace;padding:10px 12px;border-radius:8px;z-index:50;max-height:40vh;overflow:auto;display:none;white-space:pre-wrap;"></div>
+
+<script>
+  (function () {
+    var ok = document.getElementById('status-ok');
+    var card = document.getElementById('status');
+    if (ok) ok.addEventListener('click', function () { card.style.display = 'none'; });
+    var log = document.getElementById('errlog');
+    function show(msg) {
+      if (!log) return;
+      log.style.display = 'block';
+      log.textContent = (log.textContent ? log.textContent + '\n' : '') + msg;
+    }
+    window.addEventListener('error', function (e) {
+      show('ERR: ' + (e.message || e.error) + (e.filename ? ' @ ' + e.filename + ':' + e.lineno : ''));
+    });
+    window.addEventListener('unhandledrejection', function (e) {
+      show('REJ: ' + (e.reason && e.reason.message ? e.reason.message : e.reason));
+    });
+    window.__sunArrowReady = false;
+    setTimeout(function () {
+      if (!window.__sunArrowReady) show('Module did not initialize within 4s — likely an import/syntax error.');
+    }, 4000);
+  })();
+</script>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.169.0/build/three.module.js"
+  }
+}
+</script>
+
 <script type="module">
-  import { getPosition } from './js/solar.js';
+  import * as THREE from 'three';
+  import { getPosition } from './js/solar.js?v=4';
 
   const $ = (id) => document.getElementById(id);
 
-  // --- DOM refs
-  const arrow = $('arrow');
-  const shaft = $('shaft');
-  const head = $('head');
-  const baseDisc = $('base-disc');
-  const sunDot = $('sun-dot');
-  const horizon = $('horizon');
-  const cardN = $('card-n'), cardE = $('card-e'), cardS = $('card-s'), cardW = $('card-w');
+  // ===== State =====
+  let sensorsActive = false;
+  let locked = false;
+  let observer = { lat: 43.6532, lon: -79.3832 };
+  let headingSmoothed = null;
+  const headingHistory = [];
+  let compassAccuracyDeg = null;
+  let R = identityMat();
+
+  // ===== DOM =====
   const sunAzEl = $('sun-az'), sunElEl = $('sun-el'), headingEl = $('heading');
   const uncBar = $('unc-bar'), uncText = $('unc-text');
   const enableBtn = $('enable-btn'), lockBtn = $('lock-btn'), resetBtn = $('reset-btn');
-  const statusCard = $('status'), statusOk = $('status-ok');
 
-  // --- State
-  let sensorsActive = false;
-  let locked = false;
-  let lockedSunVec = null;       // [x, y, z] in world ENU
-  let observer = { lat: 43.6532, lon: -79.3832 };
-  let now = new Date();
-
-  // EMA-smoothed heading and recent variance
-  let headingSmoothed = null;
-  const headingHistory = [];     // last 30 raw samples for variance
-  let compassAccuracyDeg = null; // iOS-provided, when available
-
-  // Latest device orientation matrix (3x3 row-major)
-  // Identity = phone flat, screen up, top of phone facing north
-  let R = identityMat();
-
-  // --- Geolocation (best-effort)
+  // ===== Geolocation =====
   if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(
       (pos) => { observer = { lat: pos.coords.latitude, lon: pos.coords.longitude }; },
@@ -424,9 +299,102 @@
     );
   }
 
-  statusOk.addEventListener('click', () => { statusCard.style.display = 'none'; });
+  // ===== Three.js scene =====
+  const canvas = $('three');
+  const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-  // --- Permission flow
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+  camera.position.set(0, 0, 9);
+  camera.lookAt(0, 0, 0);
+
+  // Lighting — gives genuine volumetric depth
+  scene.add(new THREE.HemisphereLight(0xfff1c2, 0x1a1d28, 0.55));
+  const keyLight = new THREE.DirectionalLight(0xffffff, 1.6);
+  keyLight.position.set(3, 5, 4);
+  scene.add(keyLight);
+  const rimLight = new THREE.DirectionalLight(0x4dd2ff, 0.45);
+  rimLight.position.set(-3, -2, -3);
+  scene.add(rimLight);
+  const fillLight = new THREE.DirectionalLight(0xff8a3d, 0.35);
+  fillLight.position.set(-2, 0, 4);
+  scene.add(fillLight);
+
+  // ===== Arrow geometry (real 3D mesh) =====
+  // Built along its local +X axis. We then orient the wrapper to point at the sun.
+  const SHAFT_LEN = 2.4;
+  const HEAD_LEN = 1.0;
+
+  const goldMat = new THREE.MeshStandardMaterial({
+    color: 0xffb845,
+    metalness: 0.55,
+    roughness: 0.32,
+    emissive: 0x6e2b00,
+    emissiveIntensity: 0.35,
+  });
+  const cyanMat = new THREE.MeshStandardMaterial({
+    color: 0x4dd2ff,
+    metalness: 0.4,
+    roughness: 0.40,
+    emissive: 0x0a4055,
+    emissiveIntensity: 0.30,
+    transparent: true,
+    opacity: 0.62,
+  });
+
+  // Cylinder is along +Y by default; rotate to lay along +X
+  const shaftGeom = new THREE.CylinderGeometry(0.18, 0.18, SHAFT_LEN, 28, 1);
+  const shaftMesh = new THREE.Mesh(shaftGeom, goldMat);
+  shaftMesh.rotation.z = -Math.PI / 2;
+  shaftMesh.position.x = SHAFT_LEN / 2;
+
+  // Cone (pyramidal head) along +Y by default; rotate to point along +X
+  const headGeom = new THREE.ConeGeometry(0.42, HEAD_LEN, 28, 1);
+  const headMesh = new THREE.Mesh(headGeom, goldMat);
+  headMesh.rotation.z = -Math.PI / 2;
+  headMesh.position.x = SHAFT_LEN + HEAD_LEN / 2;
+
+  // Tail cap — gives the back end visual closure
+  const tailGeom = new THREE.SphereGeometry(0.20, 18, 14);
+  const tailMesh = new THREE.Mesh(tailGeom, goldMat);
+  tailMesh.position.x = 0;
+
+  const arrowGroup = new THREE.Group();
+  arrowGroup.add(tailMesh);
+  arrowGroup.add(shaftMesh);
+  arrowGroup.add(headMesh);
+  // Center the visible arrow on origin so rotation pivots at its center.
+  arrowGroup.position.x = -(SHAFT_LEN + HEAD_LEN) / 2;
+
+  const arrowPivot = new THREE.Group();
+  arrowPivot.add(arrowGroup);
+  scene.add(arrowPivot);
+
+  // Sun dot (free-floating in the scene at the projected world-sun direction)
+  const sunMat = new THREE.MeshStandardMaterial({
+    color: 0xfff1c2, emissive: 0xffb845, emissiveIntensity: 1.6,
+    metalness: 0.0, roughness: 0.3,
+  });
+  const sunMesh = new THREE.Mesh(new THREE.SphereGeometry(0.18, 16, 12), sunMat);
+  scene.add(sunMesh);
+
+  // Faint reference ring (XY plane) for spatial anchoring
+  const ringGeom = new THREE.RingGeometry(2.5, 2.55, 64);
+  const ringMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.06, side: THREE.DoubleSide });
+  const ring = new THREE.Mesh(ringGeom, ringMat);
+  ring.rotation.x = Math.PI / 2;
+  scene.add(ring);
+
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight, false);
+  });
+
+  // ===== Sensors =====
   enableBtn.addEventListener('click', async () => {
     enableBtn.disabled = true;
     try {
@@ -447,31 +415,24 @@
       lockBtn.style.opacity = '1';
       uncText.textContent = 'Calibrating…';
     } catch (e) {
-      uncText.textContent = 'Sensors unavailable on this device.';
+      uncText.textContent = 'Sensors unavailable: ' + e.message;
       enableBtn.disabled = false;
     }
   });
 
-  // --- "Point at actual sun": lock the arrow to the world sun direction
-  // regardless of phone orientation. Useful for verifying or for posing.
   lockBtn.addEventListener('click', () => {
-    locked = true;
-    document.body.classList.add('locked');
-    resetBtn.hidden = false;
-    lockBtn.hidden = true;
+    locked = true; document.body.classList.add('locked');
+    resetBtn.hidden = false; lockBtn.hidden = true;
   });
   resetBtn.addEventListener('click', () => {
-    locked = false;
-    document.body.classList.remove('locked');
-    resetBtn.hidden = true;
-    lockBtn.hidden = false;
+    locked = false; document.body.classList.remove('locked');
+    resetBtn.hidden = true; lockBtn.hidden = false;
   });
 
-  // --- Orientation handler: build R matrix in world(ENU) <- device frame
   function onOrient(e) {
     let heading = null;
     if (typeof e.webkitCompassHeading === 'number' && !isNaN(e.webkitCompassHeading)) {
-      heading = e.webkitCompassHeading; // already 0=N, clockwise
+      heading = e.webkitCompassHeading;
       if (typeof e.webkitCompassAccuracy === 'number' && e.webkitCompassAccuracy > 0) {
         compassAccuracyDeg = e.webkitCompassAccuracy;
       }
@@ -480,40 +441,35 @@
     }
     if (heading == null || typeof e.beta !== 'number' || typeof e.gamma !== 'number') return;
 
-    // Account for screen orientation
     const so = (screen.orientation && screen.orientation.angle) || 0;
     heading = (heading + so) % 360;
 
-    // Smooth
     if (headingSmoothed == null) headingSmoothed = heading;
     else {
       const delta = ((heading - headingSmoothed + 540) % 360) - 180;
-      headingSmoothed = (headingSmoothed + delta * 0.28 + 360) % 360;
+      headingSmoothed = (headingSmoothed + delta * 0.30 + 360) % 360;
     }
     headingHistory.push(heading);
     if (headingHistory.length > 30) headingHistory.shift();
 
-    // Build rotation matrix from W3C-style alpha/beta/gamma but using
-    // our smoothed compass heading as the effective alpha replacement.
-    // Per W3C device orientation, rotation is intrinsic Z–X'–Y'':
-    //   R = Rz(alpha) * Rx(beta) * Ry(gamma)
-    // We replace alpha with (360 - smoothedHeading) to align with our heading sign.
     const alphaForMatrix = (360 - headingSmoothed) * Math.PI / 180;
     const beta = e.beta * Math.PI / 180;
     const gamma = e.gamma * Math.PI / 180;
     R = composeOrientation(alphaForMatrix, beta, gamma, so * Math.PI / 180);
   }
 
-  // --- Render loop
-  function tick() {
-    now = new Date();
+  // ===== Render loop =====
+  // Smoothing for the arrow's quaternion target (separate from heading EMA)
+  const targetQuat = new THREE.Quaternion();
+  const xAxis = new THREE.Vector3(1, 0, 0);
 
-    // Sun world vector in ENU (East, North, Up)
+  function tick() {
+    const now = new Date();
+
+    // Sun world vector (ENU): x=East, y=North, z=Up
     const sun = getPosition(now, observer.lat, observer.lon);
     const azRad = sun.azimuthDeg * Math.PI / 180;
     const elRad = sun.altitudeDeg * Math.PI / 180;
-    // ENU: x = east, y = north, z = up
-    // azimuth measured from north, clockwise → east component = sin(az), north = cos(az)
     const sunWorld = [
       Math.cos(elRad) * Math.sin(azRad),
       Math.cos(elRad) * Math.cos(azRad),
@@ -524,90 +480,53 @@
     sunElEl.textContent = `${sun.altitudeDeg.toFixed(1)}°`;
     document.body.classList.toggle('night', sun.altitudeDeg < -1);
 
-    // Arrow direction: in locked mode, always show the actual world sun
-    // direction (independent of how phone is held) — so the arrow points
-    // due to the sun in space. We project that into screen by using the
-    // device frame R, but if R is identity (sensors off), we still get
-    // a meaningful answer (looking down on a flat phone).
-    const targetVec = sunWorld;
-
-    // Transform world → device frame using R^T (R is device→world)
-    // Device frame: x = right, y = up (top of phone), z = out of screen.
+    // Transform world → device frame using R^T  (R is device→world)
     const Rt = transpose(R);
-    let v = matVec(Rt, targetVec);
+    const v = matVec(Rt, sunWorld);
+    // ENU device frame: x=East→right, y=North→up-on-screen (top of phone), z=Up→out-of-screen
+    // Three.js camera frame: x=right, y=up, z=out-of-screen — already aligned ✓
 
-    // For the rendering plane: the SCREEN is the device X-Y plane.
-    // - Positive screen X right, positive screen Y up (we'll flip Y for CSS).
-    // - Z > 0 means in front of the camera (out of screen) → arrow tip toward viewer.
-    // Project: the arrow azimuth on-screen is atan2(v[0], v[1]) with v[1] = device-up.
-    // CSS: 0deg points right (positive X on rotateZ). Azimuth in screen plane:
-    const screenAngleRad = Math.atan2(v[0], v[1]); // 0 = up on screen
-    // Convert to CSS rotateZ (where 0 = right): we want arrow up on screen for v[1] big.
-    // So shaft initially points along its own +X (right). Rotate so that +X → screen direction.
-    const cssRotZ = (screenAngleRad * 180 / Math.PI) - 90; // shift -90 so up is up
+    // Aim the arrow's local +X axis along v
+    const dirVec = new THREE.Vector3(v[0], v[1], v[2]).normalize();
+    targetQuat.setFromUnitVectors(xAxis, dirVec);
+    // Slerp for smoother feel between sensor samples
+    arrowPivot.quaternion.slerp(targetQuat, 0.35);
 
-    // Tilt out of plane: angle between v and screen plane
-    const horizMag = Math.hypot(v[0], v[1]);
-    const tiltRad = Math.atan2(v[2], horizMag); // positive = toward viewer (out of screen)
-    const tiltDeg = tiltRad * 180 / Math.PI;
+    // Place sun mesh on a sphere of radius 4 in device frame
+    sunMesh.position.set(v[0] * 4.0, v[1] * 4.0, v[2] * 4.0);
+    // Sun emissive pulses gently
+    sunMat.emissiveIntensity = 1.4 + 0.3 * Math.sin(now.getTime() / 600);
 
-    // Arrow length scales gently with how "in plane" the vector is (so when
-    // pointing straight out of the screen it looks short).
-    const len = 90 + 100 * Math.cos(tiltRad);
-    const behind = v[2] < 0;
-
-    // --- Uncertainty
-    const variance = headingVariance(headingHistory);
-    const compassUnc = compassAccuracyDeg != null ? compassAccuracyDeg : 12;
-    // Total uncertainty (deg): combine in quadrature, plus a small floor.
-    const totalUncDeg = sensorsActive
-      ? Math.min(60, Math.sqrt(compassUnc * compassUnc + variance * variance) + 3)
-      : 25;
-    const uncRatio = Math.min(1, totalUncDeg / 45); // 0..1
-    // Arrow visual width
-    const minW = 8, maxW = 38;
-    const width = minW + (maxW - minW) * uncRatio;
-    const headSize = 14 + 18 * uncRatio;
-
-    shaft.style.setProperty('--len', `${len}px`);
-    shaft.style.setProperty('--w', `${width}px`);
-    head.style.setProperty('--len', `${len}px`);
-    head.style.setProperty('--head', `${headSize}px`);
-    shaft.classList.toggle('behind', behind);
-
-    // Arrow transform: rotate Z (in screen plane), then rotate X (tilt out of plane).
-    arrow.style.transform = `rotateZ(${cssRotZ.toFixed(2)}deg) rotateX(${(-tiltDeg).toFixed(2)}deg)`;
-
-    // --- "Aimed at the sun" detection: phone is pointing at the sun if the
-    // device-frame vector v is dominated by +z (out of screen). Threshold is
-    // 8° angular distance from screen-normal axis.
-    const angleFromScreenNormalDeg = Math.acos(Math.max(-1, Math.min(1, v[2]))) * 180 / Math.PI;
-    const aimed = sensorsActive && !locked && angleFromScreenNormalDeg < 8 && v[2] > 0;
-    document.body.classList.toggle('aimed', aimed);
-
-    // --- Sun dot in 3D space:
-    // Place at projected screen coords scaled to a sphere ~ 30vmin radius around center.
-    // Use the device-frame vector v: screen X = v[0], screen Y = -v[1], depth = v[2]
-    const radPx = Math.min(window.innerWidth, window.innerHeight) * 0.30;
-    const sx = v[0] * radPx;
-    const sy = -v[1] * radPx;
-    const sz = v[2] * radPx;
-    sunDot.style.transform = `translate3d(${sx.toFixed(1)}px, ${sy.toFixed(1)}px, ${sz.toFixed(1)}px)`;
-
-    // --- Horizon disc rotation: rotate so cardinal N points north on screen.
-    // The disc lies on the world X-Y plane (z=0). We want to find the rotation that
-    // shows that plane through R^T. Simplification: rotate the disc by -heading around Z
-    // and apply pitch/roll from R for tilt.
-    // For clarity, just rotate cardinals by -heading on the disc.
-    if (headingSmoothed != null) {
-      const h = headingSmoothed;
-      cardN.style.transform = `rotateZ(${-h}deg) translate(0, -40vmin) rotateX(-70deg) rotateZ(${h}deg)`;
-      cardE.style.transform = `rotateZ(${-h}deg) translate(40vmin, 0) rotateX(-70deg) rotateZ(${h}deg)`;
-      cardS.style.transform = `rotateZ(${-h}deg) translate(0, 40vmin) rotateX(-70deg) rotateZ(${h}deg)`;
-      cardW.style.transform = `rotateZ(${-h}deg) translate(-40vmin, 0) rotateX(-70deg) rotateZ(${h}deg)`;
+    // Below-horizon: swap arrow material to cyan and dim the sun
+    if (sun.altitudeDeg < -1) {
+      setArrowMaterial(cyanMat);
+      sunMat.emissiveIntensity = 0.4;
+    } else {
+      setArrowMaterial(goldMat);
     }
 
-    // --- Status text
+    // Uncertainty → arrow girth
+    const variance = headingVariance(headingHistory);
+    const compassUnc = compassAccuracyDeg != null ? compassAccuracyDeg : 12;
+    const totalUncDeg = sensorsActive
+      ? Math.min(60, Math.sqrt(compassUnc * compassUnc + variance * variance) + 3)
+      : 22;
+    const uncRatio = Math.min(1, totalUncDeg / 45);
+
+    // Scale arrow girth (only Y/Z) and head size with uncertainty.
+    // Min girth = 1.0, max = 2.6.
+    const girth = 1.0 + 1.6 * uncRatio;
+    arrowGroup.scale.set(1, girth, girth);
+
+    // Aim hit detection
+    const aimAngleDeg = Math.acos(Math.max(-1, Math.min(1, v[2]))) * 180 / Math.PI;
+    const aimed = sensorsActive && !locked && aimAngleDeg < 8 && v[2] > 0;
+    document.body.classList.toggle('aimed', aimed);
+
+    // Boost emissive when aimed
+    goldMat.emissiveIntensity = aimed ? 0.8 : 0.35;
+
+    // Status
     headingEl.textContent = headingSmoothed != null ? `${headingSmoothed.toFixed(0)}°` : '—';
     uncBar.style.width = `${(uncRatio * 100).toFixed(0)}%`;
     if (sensorsActive) {
@@ -618,14 +537,21 @@
       uncText.textContent = 'Sensors off — arrow shown for reference (top of screen = north)';
     }
 
+    renderer.render(scene, camera);
     requestAnimationFrame(tick);
   }
+
+  function setArrowMaterial(mat) {
+    if (shaftMesh.material !== mat) shaftMesh.material = mat;
+    if (headMesh.material !== mat) headMesh.material = mat;
+    if (tailMesh.material !== mat) tailMesh.material = mat;
+  }
+
+  window.__sunArrowReady = true;
   requestAnimationFrame(tick);
 
   // ===== Math helpers =====
-  function identityMat() {
-    return [[1,0,0],[0,1,0],[0,0,1]];
-  }
+  function identityMat() { return [[1,0,0],[0,1,0],[0,0,1]]; }
   function transpose(m) {
     return [
       [m[0][0], m[1][0], m[2][0]],
@@ -646,49 +572,26 @@
       r[i][j] = a[i][0]*b[0][j] + a[i][1]*b[1][j] + a[i][2]*b[2][j];
     return r;
   }
-  function Rz(t) {
-    const c = Math.cos(t), s = Math.sin(t);
-    return [[c,-s,0],[s,c,0],[0,0,1]];
-  }
-  function Rx(t) {
-    const c = Math.cos(t), s = Math.sin(t);
-    return [[1,0,0],[0,c,-s],[0,s,c]];
-  }
-  function Ry(t) {
-    const c = Math.cos(t), s = Math.sin(t);
-    return [[c,0,s],[0,1,0],[-s,0,c]];
-  }
+  function Rz(t) { const c=Math.cos(t), s=Math.sin(t); return [[c,-s,0],[s,c,0],[0,0,1]]; }
+  function Rx(t) { const c=Math.cos(t), s=Math.sin(t); return [[1,0,0],[0,c,-s],[0,s,c]]; }
+  function Ry(t) { const c=Math.cos(t), s=Math.sin(t); return [[c,0,s],[0,1,0],[-s,0,c]]; }
 
-  // Compose device→world rotation matrix from W3C-style angles.
-  // World frame: x=East, y=North, z=Up.
-  // Device frame: x=right, y=top of phone, z=out of screen.
-  // When phone is flat (beta=0, gamma=0) and pointing north (alpha matched to heading),
-  // device y = North, device x = East, device z = Up → R = identity in our convention
-  // with one caveat: alphaForMatrix = (360 - heading) which gives Rz(0) when heading=0.
   function composeOrientation(alpha, beta, gamma, screenOrientation) {
-    // R_device→world = Rz(alpha) * Rx(beta) * Ry(gamma)
     let R = matMul(Rz(alpha), matMul(Rx(beta), Ry(gamma)));
-    // Then account for screen-orientation rotation (around device z)
-    if (screenOrientation) {
-      R = matMul(R, Rz(-screenOrientation));
-    }
+    if (screenOrientation) R = matMul(R, Rz(-screenOrientation));
     return R;
   }
-
   function headingVariance(history) {
     if (history.length < 4) return 0;
-    // Compute circular standard deviation
     let sx = 0, sy = 0;
     for (const h of history) {
       const r = h * Math.PI / 180;
-      sx += Math.cos(r);
-      sy += Math.sin(r);
+      sx += Math.cos(r); sy += Math.sin(r);
     }
-    sx /= history.length;
-    sy /= history.length;
-    const R = Math.hypot(sx, sy);
-    if (R >= 1) return 0;
-    return Math.sqrt(-2 * Math.log(R)) * 180 / Math.PI;
+    sx /= history.length; sy /= history.length;
+    const Rmag = Math.hypot(sx, sy);
+    if (Rmag >= 1) return 0;
+    return Math.sqrt(-2 * Math.log(Rmag)) * 180 / Math.PI;
   }
 </script>
 
