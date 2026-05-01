@@ -3,18 +3,21 @@
 import * as store from './state.js';
 import { initMap, whenStyleReady } from './map.js';
 import { addObserverLayer, setObserver } from './layers/observer.js';
-import { addSunPathLayer, updateSunPathDay, updateSunNow } from './layers/sun-path.js';
-import { addReflectionLayer, updateReflectionDay, updateReflectionNow, setReflectionVisible } from './layers/reflection.js';
+import { addSunPathLayer, updateSunPathDay, updateSunNow, setSunPathVisible } from './layers/sun-path.js';
+import { addReflectionLayer, updateReflectionDay, updateReflectionNow, updateReflectionWall, setReflectionVisible } from './layers/reflection.js';
 import { addTargetLayer, setTarget } from './layers/target.js';
+import { addShadowLayer, updateShadow, setShadowVisible } from './layers/shadow.js';
 import { initScrubber, renderScrubberTicks } from './ui/scrubber.js';
 import { renderChartDay, updateChartNow } from './ui/chart.js';
 import { initSearch } from './ui/search.js';
 import { enableCompass, disableCompass } from './ui/sensor.js';
 import { attachHashSync } from './share.js';
-import { getPosition, getDayBoundaries } from './solar.js';
+import { getPosition, getMoonPos, getMoonIllumination, getDayBoundaries } from './solar.js';
 import { reflectAzimuth } from './reflection.js';
 import { findNextAlignment } from './alignment.js';
 import { bearing, formatTime, formatDate, throttleRaf, startOfLocalDay } from './util.js';
+import { initArrowView, showArrowView, hideArrowView, updateArrowView } from './ui/arrow-view.js';
+import { checkAndNotify, saveReminder } from './reminders.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -24,12 +27,13 @@ const dom = {
   searchResults: $('search-results'),
   locateBtn: $('locate-btn'),
   modeButtons: document.querySelectorAll('.mode-btn'),
+  shadowToggle: $('shadow-toggle'),
   compassBtn: $('compass-btn'),
   shareBtn: $('share-btn'),
+  saveReminderBtn: $('save-reminder-btn'),
   scrubber: $('scrubber'),
   scrubberTicks: $('scrubber-ticks'),
-  playBtn: $('play-btn'),
-  playIcon: $('play-icon'),
+  sunAlt: $('sun-alt'),
   hh: $('time-hh'),
   dateBtn: $('date-btn'),
   dateLabel: $('date-label'),
@@ -47,11 +51,13 @@ const dom = {
   infoSunsetAz: $('info-sunset-az'),
   infoNow: $('info-now'),
   infoNowAz: $('info-now-az'),
+  moonInfo: $('moon-info'),
 };
 
 let map;
 let lastDayKey = null;
 let lastObserverKey = null;
+let reflectionLine = null; // { start:{lat,lon}, end:{lat,lon} } — wall drawn by user
 
 async function main() {
   // Hash → store first, so initial center is correct.
@@ -69,26 +75,39 @@ async function main() {
   addSunPathLayer(map);
   addReflectionLayer(map);
   addTargetLayer(map);
+  addShadowLayer(map);
+  initArrowView();
+
+  // Check reminders on load
+  const dueReminders = checkAndNotify();
+  if (dueReminders.length && Notification.permission !== 'granted') {
+    const r = dueReminders[0];
+    const dt = new Date(r.datetime);
+    showToast(`Reminder: ${r.mode} shot at ${formatTime(dt)}`);
+  }
 
   // Map interactions
   let suppressClick = false;
 
   map.on('click', (e) => {
+    if (store.get().mode === 'reflection') return;
     if (suppressClick) { suppressClick = false; return; }
     if (e.originalEvent && e.originalEvent.target && e.originalEvent.target.closest('#topbar, #info, #modes, #bottom, #search-results')) return;
     store.set({ observer: { lat: e.lngLat.lat, lon: e.lngLat.lng } });
   });
 
   attachLongPress(map, (lngLat) => {
+    if (store.get().mode === 'reflection') return;
     suppressClick = true;
     store.set({ target: { lat: lngLat.lat, lon: lngLat.lng } });
     showToast('Target set — checking next alignment');
   });
 
+  initReflectionDraw(map);
+
   // UI
   initScrubber({
     scrubber: dom.scrubber, ticks: dom.scrubberTicks,
-    playBtn: dom.playBtn, playIcon: dom.playIcon,
     hh: dom.hh, dateBtn: dom.dateBtn, dateLabel: dom.dateLabel, dateInput: dom.dateInput,
   });
   initSearch({ input: dom.search, results: dom.searchResults }, map);
@@ -99,6 +118,23 @@ async function main() {
       store.set({ mode });
     });
   });
+
+  if (dom.shadowToggle) {
+    dom.shadowToggle.addEventListener('click', () => {
+      const next = !store.get().shadowEnabled;
+      store.set({ shadowEnabled: next });
+      dom.shadowToggle.classList.toggle('active', next);
+      dom.shadowToggle.setAttribute('aria-pressed', next ? 'true' : 'false');
+    });
+  }
+
+  if (dom.saveReminderBtn) {
+    dom.saveReminderBtn.addEventListener('click', async () => {
+      const s = store.get();
+      saveReminder(s.observer, s.datetime, s.mode);
+      showToast('Shot reminder saved');
+    });
+  }
 
   dom.compassBtn.addEventListener('click', async () => {
     if (store.get().compassEnabled) {
@@ -142,7 +178,7 @@ async function main() {
   // Compass heading updates → rotate map
   store.subscribe('compassHeading', (heading) => {
     if (heading == null) return;
-    map.setBearing(-heading);
+    map.setBearing(heading);
   });
 
   // State subscriptions
@@ -169,6 +205,8 @@ function redraw(s, changed) {
   const datetimeChanged = changed.includes('datetime');
   const modeChanged = changed.includes('mode');
   const targetChanged = changed.includes('target');
+  const shadowChanged = changed.includes('shadowEnabled');
+  const moonMode = s.mode === 'moon';
 
   if (observerChanged) {
     setObserver(map, s.observer.lat, s.observer.lon);
@@ -188,19 +226,62 @@ function redraw(s, changed) {
     lastObserverKey = observerKey;
   }
 
-  // Per-frame: live sun + reflection + chart now-line
-  updateSunNow(map, s.observer, s.datetime);
-  updateReflectionNow(map, s.observer, s.datetime);
+  // Per-frame: live sun/moon + reflection + shadow + chart now-line
+  const moonPos = moonMode ? getMoonPos(s.datetime, s.observer.lat, s.observer.lon) : null;
+  updateSunNow(map, s.observer, s.datetime, moonPos);
+  updateReflectionNow(map, s.observer, s.datetime, reflectionLine);
+  if (s.shadowEnabled) updateShadow(map, s.observer, s.datetime, moonMode);
   updateChartNow(dom.chart, s.observer, s.datetime);
   updateNowText(s);
 
-  if (modeChanged) {
-    setReflectionVisible(map, s.mode === 'reflection');
+  if (modeChanged || shadowChanged) {
+    const inArrow   = s.mode === 'arrow';
+    const inReflect = s.mode === 'reflection';
+    const inShadow  = s.shadowEnabled;
+
+    // Show/hide map-side chrome
+    document.getElementById('map').style.visibility = inArrow ? 'hidden' : '';
+    document.body.classList.toggle('mode-arrow', inArrow);
+
+    // Arrow view
+    if (inArrow) {
+      showArrowView();
+    } else {
+      hideArrowView();
+    }
+
+    // Sun-path and reflection layers (invisible in arrow mode)
+    setSunPathVisible(map, !inArrow && !inReflect);
+    setReflectionVisible(map, inReflect);
+    setShadowVisible(map, inShadow && !inArrow);
+
+    // Tilt map to 2.5D when shadow overlay is active (depth helps read shadow)
+    const targetPitch = inShadow && !inArrow ? 45 : 0;
+    map.easeTo({ pitch: targetPitch, duration: 600 });
+
+    if (inReflect) {
+      reflectionLine = null;
+      updateReflectionWall(map, null);
+      showToast('Hold & drag to draw a building line');
+    } else {
+      map.dragPan.enable();
+      reflectionLine = null;
+      updateReflectionWall(map, null);
+    }
+
     document.querySelectorAll('.mode-btn').forEach((b) => {
       const active = b.dataset.mode === s.mode;
       b.classList.toggle('active', active);
       b.setAttribute('aria-pressed', active ? 'true' : 'false');
     });
+
+    // Update moon info display
+    updateMoonInfo(s);
+  }
+
+  // Keep arrow view in sync with scrubber / observer at all times when visible
+  if (s.mode === 'arrow') {
+    updateArrowView(s.datetime, s.observer, moonMode);
   }
 
   if (targetChanged || observerChanged) {
@@ -252,14 +333,33 @@ function updateInfoCard(s, t) {
 }
 
 function updateNowText(s) {
-  const p = getPosition(s.datetime, s.observer.lat, s.observer.lon);
+  const isMoon = s.mode === 'moon';
+  const p = isMoon
+    ? getMoonPos(s.datetime, s.observer.lat, s.observer.lon)
+    : getPosition(s.datetime, s.observer.lat, s.observer.lon);
+
   dom.infoNow.textContent = formatTime(s.datetime);
   if (s.mode === 'reflection') {
     const ra = reflectAzimuth(p.azimuthDeg);
     dom.infoNowAz.textContent = `↻ ${Math.round(ra)}° · ${p.altitudeDeg > 0 ? 'above' : 'below'}`;
   } else {
-    dom.infoNowAz.textContent = `${Math.round(p.azimuthDeg)}° · ${p.altitudeDeg > 0 ? p.altitudeDeg.toFixed(1) + '°' : 'below'}`;
+    const icon = isMoon ? '🌙 ' : '';
+    dom.infoNowAz.textContent = `${icon}${Math.round(p.azimuthDeg)}° · ${p.altitudeDeg > 0 ? p.altitudeDeg.toFixed(1) + '°' : 'below'}`;
   }
+  const alt = p.altitudeDeg;
+  const above = alt > 0;
+  dom.sunAlt.textContent = above ? `↑${alt.toFixed(1)}°` : `↓${Math.abs(alt).toFixed(1)}°`;
+  dom.sunAlt.classList.toggle('below', !above);
+}
+
+function updateMoonInfo(s) {
+  if (!dom.moonInfo) return;
+  if (s.mode !== 'moon') { dom.moonInfo.hidden = true; return; }
+  const illum = getMoonIllumination(s.datetime);
+  const phases = ['🌑','🌒','🌓','🌔','🌕','🌖','🌗','🌘'];
+  const icon = phases[Math.round(illum.phase * 8) % 8];
+  dom.moonInfo.textContent = `${icon} ${Math.round(illum.fraction * 100)}% lit`;
+  dom.moonInfo.hidden = false;
 }
 
 function tryGeolocate() {
@@ -276,6 +376,85 @@ function tryGeolocate() {
 
 function hashHasObserver() {
   return /[#&]ll=/.test(location.hash);
+}
+
+function initReflectionDraw(map) {
+  const HOLD_MS = 350;     // hold duration before drawing activates
+  const CANCEL_PX = 10;    // movement during hold that cancels it (user is panning)
+
+  const UI_SEL = '#topbar,#info,#modes,#bottom,#search-results,#toast,#hint';
+
+  let holdTimer = null;
+  let holdOrigin = null;   // { lngLat, point } where finger went down
+  let drawing = false;     // true once hold fires and drag-to-draw is active
+  let drawStart = null;    // { lat, lon }
+  let drawEnd = null;      // { lat, lon } — updated every touchmove
+
+  function cancelHold() {
+    if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+    holdOrigin = null;
+  }
+
+  function onDown(e) {
+    if (store.get().mode !== 'reflection') return;
+    if (e.originalEvent && e.originalEvent.target && e.originalEvent.target.closest(UI_SEL)) return;
+    if (e.originalEvent.touches && e.originalEvent.touches.length !== 1) { cancelHold(); return; }
+
+    cancelHold();
+    holdOrigin = { lngLat: e.lngLat, point: { x: e.point.x, y: e.point.y } };
+
+    holdTimer = setTimeout(() => {
+      holdTimer = null;
+      if (!holdOrigin) return;
+      // Hold confirmed — activate drawing from this position
+      drawing = true;
+      drawStart = { lat: holdOrigin.lngLat.lat, lon: holdOrigin.lngLat.lng };
+      drawEnd = drawStart;
+      map.dragPan.disable();
+      reflectionLine = null;
+      updateReflectionWall(map, null);
+      updateReflectionNow(map, store.get().observer, store.get().datetime, null);
+    }, HOLD_MS);
+  }
+
+  function onMove(e) {
+    if (store.get().mode !== 'reflection') return;
+    // Cancel pending hold if finger moved too much (user is panning/zooming)
+    if (holdOrigin && !drawing) {
+      const dx = e.point.x - holdOrigin.point.x;
+      const dy = e.point.y - holdOrigin.point.y;
+      if (Math.hypot(dx, dy) > CANCEL_PX) cancelHold();
+    }
+    // Live line preview while drawing
+    if (drawing && drawStart) {
+      drawEnd = { lat: e.lngLat.lat, lon: e.lngLat.lng };
+      updateReflectionWall(map, { start: drawStart, end: drawEnd });
+    }
+  }
+
+  function onUp(e) {
+    cancelHold();
+    if (!drawing) return;
+    drawing = false;
+    map.dragPan.enable();
+    if (drawStart && drawEnd &&
+        Math.hypot((e.point ? e.point.x : 0), (e.point ? e.point.y : 0)) !== 0) {
+      reflectionLine = { start: drawStart, end: drawEnd };
+      updateReflectionWall(map, reflectionLine);
+      const s = store.get();
+      updateReflectionNow(map, s.observer, s.datetime, reflectionLine);
+    }
+    drawStart = null;
+    drawEnd = null;
+  }
+
+  map.on('mousedown',   onDown);
+  map.on('mousemove',   onMove);
+  map.on('mouseup',     onUp);
+  map.on('touchstart',  onDown);
+  map.on('touchmove',   onMove);
+  map.on('touchend',    onUp);
+  map.on('touchcancel', onUp);
 }
 
 function attachLongPress(map, cb) {

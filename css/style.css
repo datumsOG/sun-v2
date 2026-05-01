@@ -362,6 +362,19 @@ input { font-family: inherit; color: inherit; }
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
 }
+#sun-alt {
+  min-width: 52px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  color: var(--gold);
+  line-height: 1.1;
+}
+#sun-alt.below {
+  color: var(--text-dim);
+}
 #date-btn {
   font-size: 11px;
   color: var(--text-dim);
@@ -388,6 +401,139 @@ input { font-family: inherit; color: inherit; }
   top: calc(72px + var(--safe-top));
   background: var(--surface-strong);
 }
+
+/* ===== Arrow / AR view ===== */
+#arrow-view {
+  position: fixed;
+  inset: 0;
+  z-index: 3; /* above map (0), below modes (4) and bottom (5) */
+  background: radial-gradient(ellipse at top, #1a1d28 0%, #0b0e14 60%);
+}
+
+#arrow-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%; height: 100%;
+  display: block;
+  touch-action: none;
+}
+
+#arrow-video {
+  position: absolute;
+  inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover;
+}
+
+/* 2D guide arrow — centered, rotates to point at sun */
+#guide-arrow {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 40px; height: 56px;
+  pointer-events: none;
+  z-index: 8;
+  opacity: 0;
+  transition: opacity 0.45s ease;
+  filter: drop-shadow(0 0 8px rgba(255,184,69,0.7));
+}
+
+/* Sun disk — AR overlay, positioned via JS left/top */
+#sun-disk {
+  position: fixed;
+  width: 80px; height: 80px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,241,194,0.95) 0%, rgba(255,184,69,0.6) 45%, transparent 100%);
+  box-shadow: 0 0 40px 20px rgba(255,184,69,0.45), 0 0 80px 40px rgba(255,184,69,0.2);
+  pointer-events: none;
+  z-index: 8;
+  animation: sun-ar-pulse 2.4s ease-in-out infinite;
+}
+@keyframes sun-ar-pulse {
+  0%, 100% { transform: translate(-50%, -50%) scale(1);    opacity: 0.92; }
+  50%       { transform: translate(-50%, -50%) scale(1.10); opacity: 1;    }
+}
+
+/* Arrow HUD — top-left (topbar is hidden in arrow mode so this space is free) */
+#arrow-hud {
+  position: fixed;
+  top: calc(max(12px, env(safe-area-inset-top)) + 8px);
+  left: calc(12px + var(--safe-left));
+  z-index: 8;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  max-width: calc(100vw - 80px); /* leave room for #modes on the right */
+}
+
+#arrow-sensor-btn, #arrow-cam-btn {
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--gold-soft);
+  color: var(--gold);
+  border: 1px solid rgba(255,184,69,0.35);
+  white-space: nowrap;
+}
+
+.arrow-stat {
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--gold);
+}
+
+#arrow-hud-stats {
+  display: flex;
+  gap: 10px;
+}
+
+/* Arrow mode active button colour */
+.mode-btn[data-mode="arrow"].active { color: var(--gold); background: var(--gold-soft); }
+
+/* Moon mode button */
+.mode-btn[data-mode="moon"].active { color: #d0d8e8; background: rgba(180,195,225,0.12); }
+
+/* Shadow toggle */
+#shadow-toggle.active { color: #3d5aad; background: rgba(61,90,173,0.18); }
+
+/* Moon phase badge */
+.moon-badge {
+  position: fixed;
+  top: calc(72px + var(--safe-top));
+  right: calc(68px + var(--safe-right));
+  z-index: 4;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #d0d8e8;
+  white-space: nowrap;
+  animation: fadein 200ms ease-out;
+}
+
+/* Capture / calibrate buttons in arrow HUD */
+.arrow-action-btn {
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  background: rgba(255,255,255,0.08);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  white-space: nowrap;
+}
+
+/* When in arrow mode, hide the map-specific chrome */
+body.mode-arrow #topbar { display: none; }
+body.mode-arrow #info   { display: none; }
+body.mode-arrow #hint   { display: none; }
 
 /* ===== Animations ===== */
 @keyframes fadein {

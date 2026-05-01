@@ -103,6 +103,32 @@ function linInterp(t0, t1, v0, v1, target) {
   return t0 + f * (t1 - t0);
 }
 
+// ── Moon ──────────────────────────────────────────────────────────────────────
+
+/** Moon altitude + azimuth in degrees (same convention as getPosition). */
+export function getMoonPos(date, lat, lon) {
+  const p = SunCalc.getMoonPosition(date, lat, lon);
+  return {
+    altitudeDeg: p.altitude * RAD2DEG,
+    azimuthDeg: azRadFromSouthToCompassDeg(p.azimuth),
+  };
+}
+
+/**
+ * Moon illumination data.
+ * phase: 0=new · 0.25=first quarter · 0.5=full · 0.75=last quarter
+ * fraction: 0–1 lit fraction
+ * waxing: true before full moon
+ */
+export function getMoonIllumination(date) {
+  const m = SunCalc.getMoonIllumination(date);
+  return {
+    phase: m.phase,
+    fraction: m.fraction,
+    waxing: m.angle < 0,
+  };
+}
+
 /** Compass bearing of the sun at `date`, in degrees from north, clockwise. */
 export function getAzimuth(date, lat, lon) {
   const p = SunCalc.getPosition(date, lat, lon);

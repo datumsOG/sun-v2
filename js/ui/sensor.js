@@ -4,7 +4,8 @@
 
 import * as store from '../state.js';
 
-const SMOOTHING = 0.2;
+const SMOOTHING = 0.12;         // lower = more stable (was 0.2)
+const SPIKE_THRESHOLD = 45;     // degrees — discard jumps larger than this
 let smoothed = null;
 let attached = false;
 
@@ -53,10 +54,11 @@ function onOrient(e) {
   const so = (screen.orientation && screen.orientation.angle) || 0;
   heading = (heading + so) % 360;
 
-  if (smoothed == null) smoothed = heading;
-  else {
-    // Smooth around the wrap
+  if (smoothed == null) {
+    smoothed = heading;
+  } else {
     const delta = ((heading - smoothed + 540) % 360) - 180;
+    if (Math.abs(delta) > SPIKE_THRESHOLD) return; // discard spike
     smoothed = (smoothed + delta * SMOOTHING + 360) % 360;
   }
   store.set({ compassHeading: smoothed });

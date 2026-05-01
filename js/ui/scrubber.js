@@ -1,14 +1,10 @@
-// Time scrubber + play button + date picker integration.
+// Time scrubber + date picker integration.
 
 import * as store from '../state.js';
 import { withMinutes, minutesOfDay, startOfLocalDay, formatDate, throttleRaf } from '../util.js';
 
-let playing = false;
-let rafId = null;
-let lastTickTs = 0;
-
 export function initScrubber(els) {
-  const { scrubber, ticks, playBtn, playIcon, hh, dateBtn, dateLabel, dateInput } = els;
+  const { scrubber, ticks, hh, dateBtn, dateLabel, dateInput } = els;
 
   // Scrubber → store.datetime (throttled)
   const apply = throttleRaf(() => {
@@ -22,11 +18,6 @@ export function initScrubber(els) {
   // Initial value
   scrubber.value = String(minutesOfDay(store.get().datetime));
   hh.textContent = formatHHMM(+scrubber.value);
-
-  // Play / stop
-  playBtn.addEventListener('click', () => {
-    playing ? stopPlay(playIcon) : startPlay(scrubber, hh, playIcon);
-  });
 
   // Date picker
   dateBtn.addEventListener('click', () => {
@@ -69,35 +60,6 @@ export function renderScrubberTicks(ticksEl, sunrise, sunset, day) {
   };
   if (sunrise) make(sunrise, 'sunrise');
   if (sunset) make(sunset, 'sunset');
-}
-
-function startPlay(scrubber, hh, icon) {
-  playing = true;
-  icon.innerHTML = '<rect x="6" y="4" width="4" height="16" fill="currentColor"/><rect x="14" y="4" width="4" height="16" fill="currentColor"/>';
-  lastTickTs = 0;
-  const tick = (ts) => {
-    if (!playing) return;
-    if (lastTickTs === 0) lastTickTs = ts;
-    const dt = ts - lastTickTs;
-    lastTickTs = ts;
-    // Advance ~3 game-minutes per real-frame at 60fps (~3min/16ms)
-    const advanceMin = (dt / 16.6) * 3;
-    let v = +scrubber.value + advanceMin;
-    if (v >= 1440) v = 0;
-    scrubber.value = String(v);
-    const d = withMinutes(store.get().datetime, v);
-    store.set({ datetime: d });
-    hh.textContent = formatHHMM(v);
-    rafId = requestAnimationFrame(tick);
-  };
-  rafId = requestAnimationFrame(tick);
-}
-
-function stopPlay(icon) {
-  playing = false;
-  if (rafId) cancelAnimationFrame(rafId);
-  rafId = null;
-  icon.innerHTML = '<path d="M7 4l13 8-13 8z" fill="currentColor"/>';
 }
 
 function pad(n) { return String(n).padStart(2, '0'); }

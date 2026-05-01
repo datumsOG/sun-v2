@@ -1,6 +1,6 @@
 // Minimal service worker: cache app shell, network-first for everything else.
 
-const CACHE = 'sun-v2-shell-v4';
+const CACHE = 'sun-v2-shell-v11';
 const SHELL = [
   './',
   './index.html',
@@ -14,14 +14,19 @@ const SHELL = [
   './js/alignment.js',
   './js/share.js',
   './js/map.js',
+  './js/terrain.js',
+  './js/buildings.js',
+  './js/reminders.js',
   './js/layers/observer.js',
   './js/layers/sun-path.js',
   './js/layers/reflection.js',
   './js/layers/target.js',
+  './js/layers/shadow.js',
   './js/ui/scrubber.js',
   './js/ui/chart.js',
   './js/ui/search.js',
   './js/ui/sensor.js',
+  './js/ui/arrow-view.js',
   './vendor/suncalc.js',
   './icons/icon-192.svg',
   './icons/icon-512.svg',

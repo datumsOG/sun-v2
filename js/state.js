@@ -4,7 +4,8 @@
 //   {
 //     observer: { lat, lon },
 //     datetime: Date,
-//     mode: 'sun' | 'reflection',
+//     mode: 'sun' | 'moon' | 'reflection' | 'arrow',
+//     shadowEnabled: boolean,        // shadow overlay active
 //     compassEnabled: boolean,
 //     compassHeading: number | null,
 //     target: { lat, lon } | null,
@@ -19,6 +20,7 @@ const state = {
   observer: { lat: 43.6532, lon: -79.3832 }, // Toronto fallback
   datetime: new Date(),
   mode: 'sun',
+  shadowEnabled: false,
   compassEnabled: false,
   compassHeading: null,
   target: null,

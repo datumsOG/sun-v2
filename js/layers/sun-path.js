@@ -121,6 +121,13 @@ export function addSunPathLayer(map) {
   });
 }
 
+export function setSunPathVisible(map, visible) {
+  const v = visible ? 'visible' : 'none';
+  for (const id of [PATH_GLOW, PATH_LINE, SR_LINE, SS_LINE, RAY_LINE, MARKER_GLOW, MARKER]) {
+    if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', v);
+  }
+}
+
 /** Compute and update everything that depends on date+location only. */
 export function updateSunPathDay(map, observer, datetime) {
   const { lat, lon } = observer;
@@ -155,10 +162,13 @@ export function updateSunPathDay(map, observer, datetime) {
   return t;
 }
 
-/** Light update: just the live sun ray + marker as scrubber moves. */
-export function updateSunNow(map, observer, datetime) {
+/**
+ * Light update: just the live ray + marker as scrubber moves.
+ * posOverride: pass pre-computed { azimuthDeg, altitudeDeg } to use moon position.
+ */
+export function updateSunNow(map, observer, datetime, posOverride = null) {
   const { lat, lon } = observer;
-  const p = getPosition(datetime, lat, lon);
+  const p = posOverride || getPosition(datetime, lat, lon);
 
   if (p.altitudeDeg < -1) {
     setLine(map, RAY_SRC, []);
