@@ -120,6 +120,12 @@ export function getMoonPos(date, lat, lon) {
  * fraction: 0–1 lit fraction
  * waxing: true before full moon
  */
+/** Moon rise/set on a local-day basis. Returns { rise, set } (either may be null). */
+export function getMoonTimes(date, lat, lon) {
+  const t = SunCalc.getMoonTimes(date, lat, lon, true);
+  return { rise: t.rise || null, set: t.set || null };
+}
+
 export function getMoonIllumination(date) {
   const m = SunCalc.getMoonIllumination(date);
   return {

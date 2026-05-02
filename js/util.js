@@ -45,9 +45,11 @@ export function formatDate(date) {
   const today = new Date();
   const sameDay = date.toDateString() === today.toDateString();
   if (sameDay) return 'Today';
-  const tomorrow = new Date(today.getTime() + 86400000);
-  if (date.toDateString() === tomorrow.toDateString()) return 'Tomorrow';
-  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  // "01 Feb 2026" format
+  const dd = String(date.getDate()).padStart(2, '0');
+  const mon = date.toLocaleString('en', { month: 'short' });
+  const yyyy = date.getFullYear();
+  return `${dd} ${mon} ${yyyy}`;
 }
 
 export function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }

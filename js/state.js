@@ -1,26 +1,28 @@
-// Tiny pub/sub state store. ~80 lines.
+// Tiny pub/sub state store.
 //
 // Shape:
 //   {
 //     observer: { lat, lon },
 //     datetime: Date,
-//     mode: 'sun' | 'moon' | 'reflection' | 'arrow',
-//     shadowEnabled: boolean,        // shadow overlay active
+//     mode: 'sun' | 'moon',                 // celestial body being tracked
+//     view: 'map' | 'camera',               // which UI surface is active
+//     shadowEnabled: boolean,
+//     reflectionEnabled: boolean,
 //     compassEnabled: boolean,
 //     compassHeading: number | null,
 //     target: { lat, lon } | null,
 //   }
-//
-// Subscribe to a slice key to be notified when only that slice changes.
 
-const listeners = new Map(); // slice -> Set<fn>
+const listeners = new Map();
 const allListeners = new Set();
 
 const state = {
-  observer: { lat: 43.6532, lon: -79.3832 }, // Toronto fallback
+  observer: { lat: 43.6532, lon: -79.3832 },
   datetime: new Date(),
   mode: 'sun',
+  view: 'map',
   shadowEnabled: false,
+  reflectionEnabled: false,
   compassEnabled: false,
   compassHeading: null,
   target: null,

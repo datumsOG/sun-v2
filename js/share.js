@@ -35,7 +35,7 @@ export function decodeHashToState(hash) {
     if (!isNaN(d)) out.datetime = d;
   }
   const m = params.get('m');
-  if (m === 'reflection' || m === 'sun') out.mode = m;
+  if (m === 'sun' || m === 'moon') out.mode = m;
   const tg = params.get('tg');
   if (tg) {
     const [lat, lon] = tg.split(',').map(Number);

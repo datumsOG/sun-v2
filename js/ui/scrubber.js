@@ -1,25 +1,50 @@
-// Time scrubber + date picker integration.
+// Time scrubber + date picker.
+//
+// In sun mode the slider runs 0..1439 (minutes of local day).
+// In moon mode the slider runs 0..(set - rise in minutes), with the value
+// representing the number of minutes after the active moonrise — so the
+// left edge = moonrise and the right edge = moonset.
 
 import * as store from '../state.js';
 import { withMinutes, minutesOfDay, startOfLocalDay, formatDate, throttleRaf } from '../util.js';
 
-export function initScrubber(els) {
-  const { scrubber, ticks, hh, dateBtn, dateLabel, dateInput } = els;
+let scrubberRange = { mode: 'sun', moonRise: null, moonSet: null };
 
-  // Scrubber → store.datetime (throttled)
+export function setScrubberRange(els, mode, moonRise = null, moonSet = null) {
+  scrubberRange = { mode, moonRise, moonSet };
+  if (!els || !els.scrubber) return;
+  if (mode === 'moon' && moonRise && moonSet && moonSet > moonRise) {
+    const span = Math.max(1, Math.round((moonSet - moonRise) / 60000));
+    els.scrubber.min = '0';
+    els.scrubber.max = String(span);
+    els.scrubber.step = '1';
+  } else {
+    els.scrubber.min = '0';
+    els.scrubber.max = '1439';
+    els.scrubber.step = '1';
+  }
+}
+
+export function initScrubber(els) {
+  const { scrubber, hh, dateBtn, dateLabel, dateInput } = els;
+
   const apply = throttleRaf(() => {
     const v = +scrubber.value;
-    const d = withMinutes(store.get().datetime, v);
+    let d;
+    if (scrubberRange.mode === 'moon' && scrubberRange.moonRise) {
+      d = new Date(scrubberRange.moonRise.getTime() + v * 60000);
+    } else {
+      d = withMinutes(store.get().datetime, v);
+    }
     store.set({ datetime: d });
-    hh.textContent = formatHHMM(v);
+    hh.textContent = formatHHMM(d);
   });
   scrubber.addEventListener('input', apply);
 
-  // Initial value
+  // Default scrubber to current time
   scrubber.value = String(minutesOfDay(store.get().datetime));
-  hh.textContent = formatHHMM(+scrubber.value);
+  hh.textContent = formatHHMM(store.get().datetime);
 
-  // Date picker
   dateBtn.addEventListener('click', () => {
     if (typeof dateInput.showPicker === 'function') dateInput.showPicker();
     else dateInput.click();
@@ -33,11 +58,15 @@ export function initScrubber(els) {
     store.set({ datetime: newDate });
   });
 
-  // React to external datetime changes (e.g. from share link, alignment jump)
   store.subscribe('datetime', (d) => {
-    const m = minutesOfDay(d);
-    if (+scrubber.value !== m) scrubber.value = String(m);
-    hh.textContent = formatHHMM(m);
+    let v;
+    if (scrubberRange.mode === 'moon' && scrubberRange.moonRise) {
+      v = Math.round((d - scrubberRange.moonRise) / 60000);
+    } else {
+      v = minutesOfDay(d);
+    }
+    if (+scrubber.value !== v) scrubber.value = String(v);
+    hh.textContent = formatHHMM(d);
     dateLabel.textContent = formatDate(startOfLocalDay(d));
     const isoDate = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
     dateInput.value = isoDate;
@@ -46,27 +75,66 @@ export function initScrubber(els) {
   dateLabel.textContent = formatDate(startOfLocalDay(store.get().datetime));
 }
 
-export function renderScrubberTicks(ticksEl, sunrise, sunset, day) {
+export function renderScrubberTicks(ticksEl, rise, set, day) {
   if (!ticksEl) return;
   ticksEl.innerHTML = '';
   if (!day) return;
+
+  if (scrubberRange.mode === 'moon' && scrubberRange.moonRise && scrubberRange.moonSet) {
+    // In moon mode the slider IS rise→set, so left tick = 0% and right tick = 100%
+    addTick(ticksEl, 0, 'sunrise');
+    addTick(ticksEl, 100, 'sunset');
+    return;
+  }
   const dayStart = startOfLocalDay(day).getTime();
+  const dayMs = 86400000;
   const make = (date, cls) => {
-    const x = ((date.getTime() - dayStart) / 86400000) * 100;
-    const t = document.createElement('div');
-    t.className = 'tick ' + cls;
-    t.style.left = `${x.toFixed(2)}%`;
-    ticksEl.appendChild(t);
+    if (!date) return;
+    const offset = date.getTime() - dayStart;
+    if (offset < 0 || offset > dayMs) return;
+    addTick(ticksEl, (offset / dayMs) * 100, cls);
   };
-  if (sunrise) make(sunrise, 'sunrise');
-  if (sunset) make(sunset, 'sunset');
+  make(rise, 'sunrise');
+  make(set, 'sunset');
+}
+
+function addTick(ticksEl, pct, cls) {
+  const t = document.createElement('div');
+  t.className = 'tick ' + cls;
+  t.style.left = `${pct.toFixed(2)}%`;
+  ticksEl.appendChild(t);
+}
+
+export function setMoonPhaseMarker(el, illum) {
+  if (!el) return;
+  if (!illum) { el.hidden = true; return; }
+  el.hidden = false;
+  const p = illum.phase;
+  let clip;
+  if (p < 0.25) {
+    const k = (0.25 - p) / 0.25;
+    clip = `inset(0 0 0 ${50 - 50 * k}%)`;
+  } else if (p < 0.5) {
+    const k = (0.5 - p) / 0.25;
+    clip = `inset(0 ${100 - 50 * k}% 0 0)`;
+  } else if (p < 0.75) {
+    const k = (p - 0.5) / 0.25;
+    clip = `inset(0 0 0 ${100 - 50 * k}%)`;
+  } else {
+    const k = (p - 0.75) / 0.25;
+    clip = `inset(0 ${50 - 50 * k}% 0 0)`;
+  }
+  el.style.setProperty('--moon-clip', clip);
 }
 
 function pad(n) { return String(n).padStart(2, '0'); }
 
-function formatHHMM(totalMinutes) {
-  const m = Math.round(totalMinutes);
-  const h = Math.floor(m / 60) % 24;
-  const mm = m % 60;
-  return `${pad(h)}:${pad(mm)}`;
+function formatHHMM(d) {
+  if (!(d instanceof Date)) {
+    const m = Math.round(d);
+    const h = Math.floor(m / 60) % 24;
+    const mm = m % 60;
+    return `${pad(h)}:${pad(mm)}`;
+  }
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }

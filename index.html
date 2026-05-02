@@ -2,11 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
 <meta name="theme-color" content="#0b0e14">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="description" content="Sun alignment, light planning, and reflection vectors on an interactive map.">
+<meta name="description" content="Sun and moon alignment, light planning, reflection vectors and shadows on an interactive map.">
 <title>Sun · light planner</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.svg" type="image/svg+xml">
@@ -14,135 +14,131 @@
 <link rel="preconnect" href="https://tiles.openfreemap.org">
 <link rel="preconnect" href="https://photon.komoot.io">
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/style.css?v=17">
 </head>
 <body>
 <div id="map" aria-label="Map"></div>
 
-<header id="topbar" class="glass">
-  <div id="search-wrap">
-    <svg class="icon" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-    <input id="search" type="search" placeholder="Search a place" autocomplete="off" autocorrect="off" spellcheck="false">
-    <button id="locate-btn" class="iconbtn" title="Use my location" aria-label="Use my location">
-      <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="currentColor"/><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12 1v3M12 20v3M1 12h3M20 12h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+<!-- Search is functionally retained but visually hidden — drives geocoding logic only. -->
+<div id="search-wrap" hidden>
+  <input id="search" type="search" autocomplete="off">
+  <ul id="search-results" hidden></ul>
+</div>
+
+<!-- Bottom dock: slider, then time readout, then control row. Nothing above. -->
+<section id="dock" class="glass">
+  <div id="scrubber-wrap">
+    <input id="scrubber" type="range" min="0" max="1439" step="1" value="720" aria-label="Time of day">
+    <div id="scrubber-ticks"></div>
+    <div id="moon-phase-marker" hidden aria-hidden="true"></div>
+  </div>
+
+  <div id="time-row">
+    <div id="time-hh">12:00</div>
+    <button id="date-btn" class="ghostbtn" aria-label="Pick date">
+      <span id="date-label">Today</span>
+    </button>
+    <input id="date-input" type="date" hidden>
+    <div id="sun-alt" aria-label="Body altitude">—</div>
+    <div id="rise-set">
+      <span id="rise-label">↑ —</span>
+      <span id="set-label">↓ —</span>
+    </div>
+  </div>
+
+  <div id="control-row" class="ctl-row">
+    <button id="body-toggle" class="ctlbtn" aria-label="Toggle sun/moon">
+      <svg id="body-icon-sun" class="ico hide" width="22" height="22" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" fill="currentColor"/><g stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.5 4.5l2 2M17.5 17.5l2 2M19.5 4.5l-2 2M6.5 17.5l-2 2"/></g></svg>
+      <svg id="body-icon-moon" class="ico" width="22" height="22" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" fill="currentColor"/></svg>
+    </button>
+
+    <button id="view-toggle" class="ctlbtn" aria-label="Toggle map/camera">
+      <svg id="view-icon-camera" class="ico" width="22" height="22" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="13" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+      <svg id="view-icon-map" class="ico hide" width="22" height="22" viewBox="0 0 24 24"><path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2zM9 4v16M15 6v16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+    </button>
+
+    <button id="locate-btn" class="ctlbtn" aria-label="Center on my location">
+      <svg width="22" height="22" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="currentColor"/><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 1v3M12 20v3M1 12h3M20 12h3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    </button>
+
+    <button id="compass-toggle" class="ctlbtn toggle" aria-pressed="false" aria-label="Compass mode">
+      <svg width="22" height="22" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m12 5 2 7-2 7-2-7z" fill="currentColor"/></svg>
+    </button>
+
+    <button id="shadow-toggle" class="ctlbtn toggle" aria-pressed="false" aria-label="Shadow mode">
+      <svg width="22" height="22" viewBox="0 0 24 24"><ellipse cx="12" cy="19" rx="8" ry="2.5" fill="currentColor" opacity="0.5"/><path d="M12 4v9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="12" y1="13" x2="5" y2="19" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    </button>
+
+    <button id="reflection-toggle" class="ctlbtn toggle" aria-pressed="false" aria-label="Reflection mode">
+      <svg width="22" height="22" viewBox="0 0 24 24"><path d="M4 12h16M8 7l-4 5 4 5M16 7l4 5-4 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+
+    <button id="reminder-btn" class="ctlbtn" aria-label="Save reminder">
+      <svg width="22" height="22" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 7v5l3 3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+
+    <button id="share-btn" class="ctlbtn" aria-label="Share link">
+      <svg width="22" height="22" viewBox="0 0 24 24"><path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M16 6l-4-4-4 4M12 2v13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
   </div>
-  <ul id="search-results" hidden></ul>
-</header>
 
-<aside id="info" class="glass" aria-live="polite">
-  <div class="info-row">
-    <div class="info-col">
-      <div class="info-label">Sunrise</div>
-      <div class="info-value" id="info-sunrise">—</div>
-      <div class="info-sub" id="info-sunrise-az">—</div>
-    </div>
-    <div class="info-col">
-      <div class="info-label">Sunset</div>
-      <div class="info-value" id="info-sunset">—</div>
-      <div class="info-sub" id="info-sunset-az">—</div>
-    </div>
-    <div class="info-col">
-      <div class="info-label">Now</div>
-      <div class="info-value" id="info-now">—</div>
-      <div class="info-sub" id="info-now-az">—</div>
-    </div>
+  <div id="shadow-elev-panel" hidden>
+    <label for="shadow-elev">Caster height</label>
+    <input id="shadow-elev" type="range" min="0" max="1000" step="1" value="333">
+    <span id="shadow-elev-val">10 m</span>
   </div>
-  <div id="alignment-card" class="alignment" hidden>
-    <div class="alignment-label">Next alignment</div>
-    <div class="alignment-detail">
-      <span id="alignment-when">—</span>
-      <button id="alignment-jump" class="ghostbtn">Jump</button>
-    </div>
-    <button id="alignment-clear" class="closebtn" aria-label="Clear target">×</button>
-  </div>
-</aside>
 
-<aside id="modes" class="glass">
-  <button class="mode-btn active" data-mode="sun" aria-pressed="true">
-    <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="currentColor"/><g stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.5 4.5l2 2M17.5 17.5l2 2M19.5 4.5l-2 2M6.5 17.5l-2 2"/></g></svg>
-    <span>Sun</span>
-  </button>
-  <button class="mode-btn" data-mode="moon" aria-pressed="false">
-    <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" fill="currentColor"/></svg>
-    <span>Moon</span>
-  </button>
-  <button class="mode-btn" data-mode="reflection" aria-pressed="false">
-    <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h16M8 7l-4 5 4 5M16 7l4 5-4 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <span>Reflect</span>
-  </button>
-  <button class="mode-btn" data-mode="arrow" aria-pressed="false">
-    <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l6 18-6-4.5L6 21z" fill="currentColor"/></svg>
-    <span>Arrow</span>
-  </button>
-  <button id="shadow-toggle" class="iconbtn" title="Shadow overlay" aria-label="Shadow overlay" aria-pressed="false">
-    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="19" rx="8" ry="2.5" fill="currentColor" opacity="0.5"/><path d="M12 3l1 8h-2z" fill="currentColor"/><line x1="12" y1="11" x2="4" y2="19" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-  </button>
-  <button id="compass-btn" class="iconbtn" title="Compass mode" aria-label="Compass mode">
-    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m12 5 2 7-2 7-2-7z" fill="currentColor"/></svg>
-  </button>
-  <button id="share-btn" class="iconbtn" title="Share link" aria-label="Share link">
-    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M16 6l-4-4-4 4M12 2v13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-  </button>
-  <button id="save-reminder-btn" class="iconbtn" title="Save reminder for this time" aria-label="Save reminder">
-    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12 7v5l3 3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-  </button>
-</aside>
-<div id="moon-info" class="glass moon-badge" hidden></div>
-
-<section id="bottom" class="glass">
-  <svg id="chart" viewBox="0 0 600 110" preserveAspectRatio="none" aria-label="Solar elevation curve"></svg>
-  <div id="scrubber-row">
-    <div id="sun-alt" aria-label="Sun altitude">—</div>
-    <div id="scrubber-wrap">
-      <input id="scrubber" type="range" min="0" max="1439" step="1" value="720" aria-label="Time of day">
-      <div id="scrubber-ticks"></div>
-    </div>
-    <div id="time-readout">
-      <span id="time-hh">12:00</span>
-      <button id="date-btn" class="ghostbtn" aria-label="Pick date">
-        <span id="date-label">Today</span>
-      </button>
-      <input id="date-input" type="date" hidden>
-    </div>
+  <div id="alignment-card" hidden>
+    <span id="alignment-when">—</span>
+    <button id="alignment-jump" class="ghostbtn" title="Move time slider to this moment">Go to time</button>
+    <button id="alignment-clear" class="closebtn" aria-label="Clear">×</button>
   </div>
 </section>
 
+<div id="hint" class="glass" hidden>Long-press a spot to find when sun rises/sets behind it</div>
+
+<!-- Right-edge vertical sliders: arc radius (lower 2/3) and map tilt (upper 1/3) -->
+<input id="tilt-slider" class="vslider tilt" type="range" min="0" max="75" step="1" value="55" aria-label="Map tilt">
+<input id="radius-slider" class="vslider radius" type="range" min="0" max="1000" step="1" value="445" aria-label="Arc radius">
+
 <div id="toast" class="glass" hidden></div>
-<div id="hint" class="glass" hidden>Long-press the map to set an alignment target</div>
 
-<!-- Arrow / AR view (shown when mode = 'arrow') -->
-<div id="arrow-view" hidden>
-  <canvas id="arrow-canvas"></canvas>
-  <video id="arrow-video" autoplay playsinline muted hidden></video>
+<!-- Camera view (active when view = 'camera') -->
+<div id="camera-view" hidden>
+  <video id="cam-video" autoplay playsinline muted></video>
 
-  <!-- 2D guide arrow (shown in AR mode when sun is off-screen) -->
+  <!-- 2D guide arrow points off-screen toward sun/moon -->
   <div id="guide-arrow" aria-hidden="true">
     <svg viewBox="0 0 40 56" width="40" height="56" fill="none">
       <path d="M20 2 L36 46 L20 36 L4 46 Z" fill="#ffb845" opacity="0.95"/>
-      <path d="M20 2 L36 46 L20 36 L4 46 Z" stroke="#fff" stroke-width="1" stroke-linejoin="round" opacity="0.4"/>
     </svg>
   </div>
 
-  <!-- Sun disk overlay (shown in AR mode when sun is on-screen) -->
-  <div id="sun-disk" hidden aria-hidden="true"></div>
+  <!-- Sun/moon disk overlay positioned via JS -->
+  <div id="body-disk" hidden aria-hidden="true">
+    <div id="body-disk-shadow"></div>
+  </div>
 
-  <!-- HUD: sensor button / stats / camera toggle / capture / calibrate -->
-  <div id="arrow-hud" class="glass">
-    <button id="arrow-sensor-btn">Enable sensors</button>
-    <div id="arrow-hud-stats" hidden>
-      <span id="arrow-az-val" class="arrow-stat">—</span>
-      <span id="arrow-el-val" class="arrow-stat">—</span>
-    </div>
-    <button id="arrow-cam-btn" hidden>📷 Camera</button>
-    <button id="arrow-calibrate-btn" class="arrow-action-btn" hidden title="Tap to align arrow with actual sun position">Align</button>
-    <button id="arrow-capture-btn" class="arrow-action-btn" hidden title="Capture frame as PNG">Capture</button>
+  <div id="cam-hud" class="glass">
+    <button id="cam-sensor-btn">Enable sensors</button>
+  </div>
+
+  <div id="cam-actions">
+    <button id="cam-calibrate" class="cam-action" hidden>Align</button>
+    <button id="cam-capture" class="cam-action" hidden>Capture</button>
   </div>
 </div>
 
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script type="importmap">{ "imports": { "three": "https://unpkg.com/three@0.169.0/build/three.module.js" } }</script>
-<script type="module" src="js/app.js"></script>
-<script>if ('serviceWorker' in navigator) { window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); }); }</script>
+<script type="module" src="js/app.js?v=17"></script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.update())).catch(() => {});
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  });
+}
+</script>
 </body>
 </html>

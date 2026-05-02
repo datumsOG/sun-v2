@@ -7,16 +7,32 @@ export function initMap(container, center) {
     container,
     style: STYLE_URL,
     center: [center.lon, center.lat],
-    zoom: 12.5,
+    zoom: 14,
+    pitch: 55,
     attributionControl: false,
-    pitchWithRotate: false,
     dragRotate: true,
-    maxPitch: 70,
+    pitchWithRotate: true,
+    maxPitch: 75,
   });
-
-  map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-left');
-
+  if (map.touchPitch && typeof map.touchPitch.enable === 'function') {
+    try { map.touchPitch.enable(); } catch {}
+  }
+  // Brighten labels (pure white with dark halo) once the style is up.
+  map.on('load', () => brightenLabels(map));
+  map.on('styledata', () => brightenLabels(map));
   return map;
+}
+
+function brightenLabels(map) {
+  try {
+    const layers = map.getStyle().layers || [];
+    for (const layer of layers) {
+      if (layer.type !== 'symbol') continue;
+      try { map.setPaintProperty(layer.id, 'text-color', '#ffffff'); } catch {}
+      try { map.setPaintProperty(layer.id, 'text-halo-color', 'rgba(0,0,0,0.85)'); } catch {}
+      try { map.setPaintProperty(layer.id, 'text-halo-width', 1.4); } catch {}
+    }
+  } catch {}
 }
 
 export function whenStyleReady(map) {

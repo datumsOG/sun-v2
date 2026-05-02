@@ -3,20 +3,18 @@
 import * as store from './state.js';
 import { initMap, whenStyleReady } from './map.js';
 import { addObserverLayer, setObserver } from './layers/observer.js';
-import { addSunPathLayer, updateSunPathDay, updateSunNow, setSunPathVisible } from './layers/sun-path.js';
+import { addSunPathLayer, updateSunPathDay, updateSunNow, setSunPathVisible, setArcRadiusKm } from './layers/sun-path.js';
 import { addReflectionLayer, updateReflectionDay, updateReflectionNow, updateReflectionWall, setReflectionVisible } from './layers/reflection.js';
 import { addTargetLayer, setTarget } from './layers/target.js';
-import { addShadowLayer, updateShadow, setShadowVisible } from './layers/shadow.js';
-import { initScrubber, renderScrubberTicks } from './ui/scrubber.js';
-import { renderChartDay, updateChartNow } from './ui/chart.js';
+import { addShadowLayer, updateShadow, setShadowVisible, setShadowHeight } from './layers/shadow.js';
+import { initScrubber, renderScrubberTicks, setMoonPhaseMarker, setScrubberRange } from './ui/scrubber.js';
 import { initSearch } from './ui/search.js';
 import { enableCompass, disableCompass } from './ui/sensor.js';
 import { attachHashSync } from './share.js';
-import { getPosition, getMoonPos, getMoonIllumination, getDayBoundaries } from './solar.js';
-import { reflectAzimuth } from './reflection.js';
+import { getPosition, getMoonPos, getMoonIllumination, getMoonTimes } from './solar.js';
 import { findNextAlignment } from './alignment.js';
 import { bearing, formatTime, formatDate, throttleRaf, startOfLocalDay } from './util.js';
-import { initArrowView, showArrowView, hideArrowView, updateArrowView } from './ui/arrow-view.js';
+import { initCameraView, showCameraView, hideCameraView, updateCameraView } from './ui/arrow-view.js';
 import { checkAndNotify, saveReminder } from './reminders.js';
 
 const $ = (id) => document.getElementById(id);
@@ -25,79 +23,94 @@ const dom = {
   map: $('map'),
   search: $('search'),
   searchResults: $('search-results'),
-  locateBtn: $('locate-btn'),
-  modeButtons: document.querySelectorAll('.mode-btn'),
-  shadowToggle: $('shadow-toggle'),
-  compassBtn: $('compass-btn'),
-  shareBtn: $('share-btn'),
-  saveReminderBtn: $('save-reminder-btn'),
   scrubber: $('scrubber'),
   scrubberTicks: $('scrubber-ticks'),
+  moonPhaseMarker: $('moon-phase-marker'),
   sunAlt: $('sun-alt'),
   hh: $('time-hh'),
   dateBtn: $('date-btn'),
   dateLabel: $('date-label'),
   dateInput: $('date-input'),
-  chart: $('chart'),
-  toast: $('toast'),
+  riseLabel: $('rise-label'),
+  setLabel: $('set-label'),
+  bodyToggle: $('body-toggle'),
+  bodyIconSun: $('body-icon-sun'),
+  bodyIconMoon: $('body-icon-moon'),
+  viewToggle: $('view-toggle'),
+  viewIconCamera: $('view-icon-camera'),
+  viewIconMap: $('view-icon-map'),
+  locateBtn: $('locate-btn'),
+  compassToggle: $('compass-toggle'),
+  shadowToggle: $('shadow-toggle'),
+  reflectionToggle: $('reflection-toggle'),
+  reminderBtn: $('reminder-btn'),
+  shareBtn: $('share-btn'),
+  shadowElevPanel: $('shadow-elev-panel'),
+  shadowElev: $('shadow-elev'),
+  shadowElevVal: $('shadow-elev-val'),
   hint: $('hint'),
+  toast: $('toast'),
+  tiltSlider: $('tilt-slider'),
+  radiusSlider: $('radius-slider'),
   alignmentCard: $('alignment-card'),
   alignmentWhen: $('alignment-when'),
   alignmentJump: $('alignment-jump'),
   alignmentClear: $('alignment-clear'),
-  infoSunrise: $('info-sunrise'),
-  infoSunriseAz: $('info-sunrise-az'),
-  infoSunset: $('info-sunset'),
-  infoSunsetAz: $('info-sunset-az'),
-  infoNow: $('info-now'),
-  infoNowAz: $('info-now-az'),
-  moonInfo: $('moon-info'),
 };
 
 let map;
 let lastDayKey = null;
 let lastObserverKey = null;
-let reflectionLine = null; // { start:{lat,lon}, end:{lat,lon} } — wall drawn by user
+let reflectionLine = null;
+
+// Map slider value 0..1000 to height 1..1000 m on a log curve (default 333 → ~10 m).
+function sliderToHeight(v) {
+  const t = Math.max(0, Math.min(1, +v / 1000));
+  return Math.max(1, Math.round(Math.pow(1000, t)));
+}
+// Map slider value 0..1000 to radius 0.02..50 km on a log curve.
+function sliderToRadiusKm(v) {
+  const t = Math.max(0, Math.min(1, +v / 1000));
+  // log range: 0.02 km → 50 km. ratio = 50/0.02 = 2500.
+  return 0.02 * Math.pow(2500, t);
+}
 
 async function main() {
-  // Hash → store first, so initial center is correct.
   attachHashSync();
-
-  // Try geolocation if no observer set from hash
+  // Always default to current time on open (overrides any t= in the hash).
+  store.set({ datetime: new Date() });
   if (!hashHasObserver()) tryGeolocate();
 
   const init = store.get();
   map = initMap(dom.map, init.observer);
-
   await whenStyleReady(map);
 
-  addObserverLayer(map, init.observer.lat, init.observer.lon);
-  addSunPathLayer(map);
-  addReflectionLayer(map);
-  addTargetLayer(map);
-  addShadowLayer(map);
-  initArrowView();
+  // Try each layer add separately so a bad layer doesn't kill all overlays.
+  const safe = (label, fn) => {
+    try { fn(); } catch (e) { console.error(label, e); showToast(label + ': ' + e.message); }
+  };
+  safe('observer', () => addObserverLayer(map, init.observer.lat, init.observer.lon));
+  safe('sun-path', () => addSunPathLayer(map));
+  safe('reflection', () => addReflectionLayer(map));
+  safe('target', () => addTargetLayer(map));
+  safe('shadow', () => addShadowLayer(map));
+  safe('camera', () => initCameraView());
 
-  // Check reminders on load
-  const dueReminders = checkAndNotify();
-  if (dueReminders.length && Notification.permission !== 'granted') {
-    const r = dueReminders[0];
-    const dt = new Date(r.datetime);
-    showToast(`Reminder: ${r.mode} shot at ${formatTime(dt)}`);
+  const due = checkAndNotify();
+  if (due.length && Notification.permission !== 'granted') {
+    showToast(`Reminder: ${due[0].mode} shot at ${formatTime(new Date(due[0].datetime))}`);
   }
 
-  // Map interactions
   let suppressClick = false;
-
   map.on('click', (e) => {
-    if (store.get().mode === 'reflection') return;
+    if (store.get().reflectionEnabled) return;
     if (suppressClick) { suppressClick = false; return; }
-    if (e.originalEvent && e.originalEvent.target && e.originalEvent.target.closest('#topbar, #info, #modes, #bottom, #search-results')) return;
+    if (e.originalEvent && e.originalEvent.target && e.originalEvent.target.closest('#dock,#search-results,#cam-hud')) return;
     store.set({ observer: { lat: e.lngLat.lat, lon: e.lngLat.lng } });
   });
 
   attachLongPress(map, (lngLat) => {
-    if (store.get().mode === 'reflection') return;
+    if (store.get().reflectionEnabled) return;
     suppressClick = true;
     store.set({ target: { lat: lngLat.lat, lon: lngLat.lng } });
     showToast('Target set — checking next alignment');
@@ -105,96 +118,149 @@ async function main() {
 
   initReflectionDraw(map);
 
-  // UI
   initScrubber({
     scrubber: dom.scrubber, ticks: dom.scrubberTicks,
     hh: dom.hh, dateBtn: dom.dateBtn, dateLabel: dom.dateLabel, dateInput: dom.dateInput,
   });
   initSearch({ input: dom.search, results: dom.searchResults }, map);
 
-  dom.modeButtons.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const mode = btn.dataset.mode;
-      store.set({ mode });
-    });
+  // Body toggle: sun ↔ moon. Icon shows the mode you would switch TO.
+  dom.bodyToggle.addEventListener('click', () => {
+    const s = store.get();
+    const next = s.mode === 'sun' ? 'moon' : 'sun';
+    const update = { mode: next };
+    if (next === 'moon') {
+      // Jump scrubber to start of the relevant moon arc
+      const now = new Date();
+      const today = getMoonTimes(now, s.observer.lat, s.observer.lon);
+      let anchor;
+      if (today.rise && today.set && today.rise < today.set && now >= today.rise && now <= today.set) {
+        anchor = today.rise;          // moon currently up — scrub from this rise
+      } else if (today.rise && now < today.rise) {
+        anchor = new Date(today.rise.getTime() - 5 * 60 * 1000); // a little before next rise
+      } else {
+        const tomorrow = getMoonTimes(new Date(now.getTime() + 24*3600*1000), s.observer.lat, s.observer.lon);
+        anchor = tomorrow.rise ? new Date(tomorrow.rise.getTime() - 5*60*1000) : now;
+      }
+      update.datetime = anchor;
+    }
+    store.set(update);
   });
 
-  if (dom.shadowToggle) {
-    dom.shadowToggle.addEventListener('click', () => {
-      const next = !store.get().shadowEnabled;
-      store.set({ shadowEnabled: next });
-      dom.shadowToggle.classList.toggle('active', next);
-      dom.shadowToggle.setAttribute('aria-pressed', next ? 'true' : 'false');
-    });
-  }
+  // View toggle: map ↔ camera.
+  dom.viewToggle.addEventListener('click', () => {
+    const next = store.get().view === 'map' ? 'camera' : 'map';
+    store.set({ view: next });
+  });
 
-  if (dom.saveReminderBtn) {
-    dom.saveReminderBtn.addEventListener('click', async () => {
-      const s = store.get();
-      saveReminder(s.observer, s.datetime, s.mode);
-      showToast('Shot reminder saved');
-    });
-  }
+  dom.locateBtn.addEventListener('click', tryGeolocate);
 
-  dom.compassBtn.addEventListener('click', async () => {
+  dom.compassToggle.addEventListener('click', async () => {
     if (store.get().compassEnabled) {
       disableCompass();
-      dom.compassBtn.classList.remove('active');
+      dom.compassToggle.classList.remove('active');
+      dom.compassToggle.setAttribute('aria-pressed', 'false');
       map.easeTo({ bearing: 0, duration: 400 });
     } else {
       const ok = await enableCompass();
       if (ok) {
-        dom.compassBtn.classList.add('active');
+        dom.compassToggle.classList.add('active');
+        dom.compassToggle.setAttribute('aria-pressed', 'true');
         showToast('Compass on — rotate to align');
       } else {
-        showToast('Compass denied or unavailable');
+        showToast('Compass denied');
       }
     }
   });
 
-  dom.shareBtn.addEventListener('click', async () => {
-    const url = location.href;
-    try {
-      if (navigator.share) {
-        await navigator.share({ title: 'Sun', url });
-      } else {
-        await navigator.clipboard.writeText(url);
-        showToast('Link copied');
-      }
-    } catch (e) { /* user cancelled */ }
+  dom.shadowToggle.addEventListener('click', () => {
+    const next = !store.get().shadowEnabled;
+    store.set({ shadowEnabled: next });
   });
 
-  dom.locateBtn.addEventListener('click', tryGeolocate);
+  dom.shadowElev.addEventListener('input', () => {
+    const h = sliderToHeight(dom.shadowElev.value);
+    setShadowHeight(h);
+    dom.shadowElevVal.textContent = `${h} m`;
+    const s = store.get();
+    if (s.shadowEnabled) updateShadow(map, s.observer, s.datetime, s.mode === 'moon');
+  });
+  // Initialise from default slider value
+  setShadowHeight(sliderToHeight(dom.shadowElev.value));
+  dom.shadowElevVal.textContent = `${sliderToHeight(dom.shadowElev.value)} m`;
+
+  // Vertical sliders (right edge)
+  if (dom.tiltSlider) {
+    dom.tiltSlider.addEventListener('input', () => {
+      map.easeTo({ pitch: +dom.tiltSlider.value, duration: 80 });
+    });
+  }
+  if (dom.radiusSlider) {
+    const applyRadius = () => {
+      const km = sliderToRadiusKm(dom.radiusSlider.value);
+      setArcRadiusKm(km);
+      // Force a day-level recompute so markers reposition.
+      const s = store.get();
+      const t = updateSunPathDay(map, s.observer, s.datetime, s.mode === 'moon');
+      updateSunNow(map, s.observer, s.datetime, s.mode === 'moon' ? getMoonPos(s.datetime, s.observer.lat, s.observer.lon) : null);
+      renderScrubberTicks(dom.scrubberTicks, t.rise, t.set, s.datetime);
+    };
+    dom.radiusSlider.addEventListener('input', applyRadius);
+    applyRadius();
+  }
+  // Sync tilt slider when user drags the map
+  map.on('pitch', () => {
+    if (dom.tiltSlider) dom.tiltSlider.value = String(Math.round(map.getPitch()));
+  });
+
+  dom.reflectionToggle.addEventListener('click', () => {
+    const s = store.get();
+    // Reflection only valid in sun + map mode
+    if (s.mode !== 'sun' || s.view !== 'map') return;
+    store.set({ reflectionEnabled: !s.reflectionEnabled });
+  });
+
+  dom.reminderBtn.addEventListener('click', () => {
+    const s = store.get();
+    saveReminder(s.observer, s.datetime, s.mode);
+    showToast('Reminder saved');
+  });
+
+  dom.shareBtn.addEventListener('click', async () => {
+    try {
+      if (navigator.share) await navigator.share({ title: 'Sun', url: location.href });
+      else { await navigator.clipboard.writeText(location.href); showToast('Link copied'); }
+    } catch {}
+  });
 
   dom.alignmentJump.addEventListener('click', () => {
     if (alignmentResult && alignmentResult.eventTime) {
       store.set({ datetime: new Date(alignmentResult.eventTime) });
     }
   });
-  dom.alignmentClear.addEventListener('click', () => {
-    store.set({ target: null });
-  });
+  dom.alignmentClear.addEventListener('click', () => store.set({ target: null }));
 
-  // Compass heading updates → rotate map
   store.subscribe('compassHeading', (heading) => {
     if (heading == null) return;
     map.setBearing(heading);
   });
 
-  // State subscriptions
   store.subscribeAll(throttleRaf((s, changed) => {
-    redraw(s, changed);
+    try { redraw(s, changed); } catch (e) { console.error('redraw failed', e); showToast('Error: ' + e.message); }
   }));
 
   // First draw
-  redraw(store.get(), ['observer', 'datetime', 'mode', 'target']);
+  try {
+    redraw(store.get(), ['observer', 'datetime', 'mode', 'view', 'target', 'shadowEnabled', 'reflectionEnabled']);
+  } catch (e) {
+    console.error('Initial redraw failed:', e);
+    showToast('Init error: ' + e.message);
+  }
 
-  // Subtle hint: show once on first load if no target
-  if (!store.get().target) {
-    setTimeout(() => {
-      dom.hint.hidden = false;
-      setTimeout(() => { dom.hint.hidden = true; }, 4500);
-    }, 1500);
+  // Brief hint on first load
+  if (dom.hint) {
+    dom.hint.hidden = false;
+    setTimeout(() => { if (dom.hint) dom.hint.hidden = true; }, 4500);
   }
 }
 
@@ -202,91 +268,105 @@ let alignmentResult = null;
 
 function redraw(s, changed) {
   const observerChanged = changed.includes('observer');
-  const datetimeChanged = changed.includes('datetime');
   const modeChanged = changed.includes('mode');
+  const viewChanged = changed.includes('view');
   const targetChanged = changed.includes('target');
   const shadowChanged = changed.includes('shadowEnabled');
+  const reflectionChanged = changed.includes('reflectionEnabled');
   const moonMode = s.mode === 'moon';
 
-  if (observerChanged) {
-    setObserver(map, s.observer.lat, s.observer.lon);
-  }
+  if (observerChanged) setObserver(map, s.observer.lat, s.observer.lon);
 
-  // Day-level recompute when date or location changes
+  // Day-level recompute
   const dayKey = startOfLocalDay(s.datetime).toDateString();
   const observerKey = `${s.observer.lat.toFixed(4)},${s.observer.lon.toFixed(4)}`;
   const dayLevelChanged = (dayKey !== lastDayKey) || (observerKey !== lastObserverKey);
-  if (dayLevelChanged || observerChanged) {
-    const t = updateSunPathDay(map, s.observer, s.datetime);
+  if (dayLevelChanged || observerChanged || modeChanged) {
+    const t = updateSunPathDay(map, s.observer, s.datetime, moonMode);
     updateReflectionDay(map, s.observer, s.datetime);
-    renderChartDay(dom.chart, s.observer, s.datetime);
-    renderScrubberTicks(dom.scrubberTicks, t.sunrise, t.sunset, s.datetime);
-    updateInfoCard(s, t);
+    // Sync scrubber range to active arc in moon mode (rise→set as 0..N minutes)
+    setScrubberRange(
+      { scrubber: dom.scrubber },
+      moonMode ? 'moon' : 'sun',
+      moonMode ? t.rise : null,
+      moonMode ? t.set : null,
+    );
+    renderScrubberTicks(dom.scrubberTicks, t.rise, t.set, s.datetime);
+    updateRiseSet(s, t);
     lastDayKey = dayKey;
     lastObserverKey = observerKey;
   }
 
-  // Per-frame: live sun/moon + reflection + shadow + chart now-line
+  // Per-frame body position
   const moonPos = moonMode ? getMoonPos(s.datetime, s.observer.lat, s.observer.lon) : null;
   updateSunNow(map, s.observer, s.datetime, moonPos);
   updateReflectionNow(map, s.observer, s.datetime, reflectionLine);
   if (s.shadowEnabled) updateShadow(map, s.observer, s.datetime, moonMode);
-  updateChartNow(dom.chart, s.observer, s.datetime);
   updateNowText(s);
+  setMoonPhaseMarker(dom.moonPhaseMarker, moonMode ? getMoonIllumination(s.datetime) : null);
 
-  if (modeChanged || shadowChanged) {
-    const inArrow   = s.mode === 'arrow';
-    const inReflect = s.mode === 'reflection';
-    const inShadow  = s.shadowEnabled;
-
-    // Show/hide map-side chrome
-    document.getElementById('map').style.visibility = inArrow ? 'hidden' : '';
-    document.body.classList.toggle('mode-arrow', inArrow);
-
-    // Arrow view
-    if (inArrow) {
-      showArrowView();
-    } else {
-      hideArrowView();
-    }
-
-    // Sun-path and reflection layers (invisible in arrow mode)
-    setSunPathVisible(map, !inArrow && !inReflect);
-    setReflectionVisible(map, inReflect);
-    setShadowVisible(map, inShadow && !inArrow);
-
-    // Tilt map to 2.5D when shadow overlay is active (depth helps read shadow)
-    const targetPitch = inShadow && !inArrow ? 45 : 0;
-    map.easeTo({ pitch: targetPitch, duration: 600 });
-
-    if (inReflect) {
-      reflectionLine = null;
-      updateReflectionWall(map, null);
-      showToast('Hold & drag to draw a building line');
-    } else {
-      map.dragPan.enable();
-      reflectionLine = null;
-      updateReflectionWall(map, null);
-    }
-
-    document.querySelectorAll('.mode-btn').forEach((b) => {
-      const active = b.dataset.mode === s.mode;
-      b.classList.toggle('active', active);
-      b.setAttribute('aria-pressed', active ? 'true' : 'false');
-    });
-
-    // Update moon info display
-    updateMoonInfo(s);
+  if (modeChanged || viewChanged || shadowChanged || reflectionChanged) {
+    syncChrome(s);
   }
 
-  // Keep arrow view in sync with scrubber / observer at all times when visible
-  if (s.mode === 'arrow') {
-    updateArrowView(s.datetime, s.observer, moonMode);
+  if (s.view === 'camera') {
+    updateCameraView(s.datetime, s.observer, moonMode);
   }
 
   if (targetChanged || observerChanged) {
     setTarget(map, s.observer, s.target);
     refreshAlignment(s);
+  }
+}
+
+function syncChrome(s) {
+  const inCamera = s.view === 'camera';
+  const inSun = s.mode === 'sun';
+
+  document.body.classList.toggle('view-camera', inCamera);
+  document.body.classList.toggle('view-map', !inCamera);
+  document.body.classList.toggle('mode-sun', inSun);
+  document.body.classList.toggle('mode-moon', !inSun);
+
+  if (inCamera) showCameraView(); else hideCameraView();
+
+  setSunPathVisible(map, !inCamera && !s.reflectionEnabled);
+  setReflectionVisible(map, !inCamera && s.reflectionEnabled);
+  setShadowVisible(map, !inCamera && s.shadowEnabled);
+
+  // Body icon: shows what you'd switch TO. In sun mode → show moon icon.
+  if (dom.bodyIconSun)  dom.bodyIconSun.classList.toggle('hide', inSun);
+  if (dom.bodyIconMoon) dom.bodyIconMoon.classList.toggle('hide', !inSun);
+
+  // View icon: shows what you'd switch TO. In map view → show camera icon.
+  if (dom.viewIconCamera) dom.viewIconCamera.classList.toggle('hide', inCamera);
+  if (dom.viewIconMap)    dom.viewIconMap.classList.toggle('hide', !inCamera);
+
+  // Toggle button visual states
+  dom.shadowToggle.classList.toggle('active', s.shadowEnabled);
+  dom.shadowToggle.setAttribute('aria-pressed', s.shadowEnabled ? 'true' : 'false');
+  dom.reflectionToggle.classList.toggle('active', s.reflectionEnabled);
+  dom.reflectionToggle.setAttribute('aria-pressed', s.reflectionEnabled ? 'true' : 'false');
+
+  // Reflection only enabled in sun + map mode
+  const reflectionAvail = inSun && !inCamera;
+  dom.reflectionToggle.classList.toggle('disabled', !reflectionAvail);
+  if (!reflectionAvail && s.reflectionEnabled) {
+    store.set({ reflectionEnabled: false });
+    return;
+  }
+
+  // Shadow elevation panel visibility
+  if (dom.shadowElevPanel) dom.shadowElevPanel.hidden = !s.shadowEnabled || inCamera;
+
+  if (s.reflectionEnabled) {
+    reflectionLine = null;
+    updateReflectionWall(map, null);
+    showToast('Hold & drag to draw a building line');
+  } else {
+    map.dragPan.enable();
+    reflectionLine = null;
+    updateReflectionWall(map, null);
   }
 }
 
@@ -305,31 +385,15 @@ function refreshAlignment(s) {
     return;
   }
   const ev = result.eventTime;
-  const kind = result.kind === 'sunrise' ? '↑ Sunrise' : '↓ Sunset';
-  const when = `${kind} · ${formatDate(ev)} ${formatTime(ev)}`;
-  const days = result.deltaDays;
-  const daysLabel = days === 0 ? 'today' : days === 1 ? 'tomorrow' : `in ${days} days`;
-  dom.alignmentWhen.innerHTML = `${escapeHtml(when)}<br><span style="color:rgba(243,244,246,0.5);font-size:11px;">${daysLabel} · az ${result.azimuth.toFixed(1)}°</span>`;
+  const kind = result.kind === 'sunrise' ? '↑' : '↓';
+  dom.alignmentWhen.textContent = `${kind} ${formatDate(ev)} ${formatTime(ev)} · az ${result.azimuth.toFixed(1)}°`;
   dom.alignmentCard.hidden = false;
 }
 
-function updateInfoCard(s, t) {
-  if (t.sunrise) {
-    dom.infoSunrise.textContent = formatTime(t.sunrise);
-    const az = getPosition(t.sunrise, s.observer.lat, s.observer.lon).azimuthDeg;
-    dom.infoSunriseAz.textContent = `${Math.round(az)}°`;
-  } else {
-    dom.infoSunrise.textContent = '—';
-    dom.infoSunriseAz.textContent = '';
-  }
-  if (t.sunset) {
-    dom.infoSunset.textContent = formatTime(t.sunset);
-    const az = getPosition(t.sunset, s.observer.lat, s.observer.lon).azimuthDeg;
-    dom.infoSunsetAz.textContent = `${Math.round(az)}°`;
-  } else {
-    dom.infoSunset.textContent = '—';
-    dom.infoSunsetAz.textContent = '';
-  }
+function updateRiseSet(s, t) {
+  const fmt = (d, prefix) => d ? `${prefix} ${formatTime(d)}` : `${prefix} —`;
+  if (dom.riseLabel) dom.riseLabel.textContent = fmt(t.rise, '↑');
+  if (dom.setLabel)  dom.setLabel.textContent  = fmt(t.set, '↓');
 }
 
 function updateNowText(s) {
@@ -337,29 +401,10 @@ function updateNowText(s) {
   const p = isMoon
     ? getMoonPos(s.datetime, s.observer.lat, s.observer.lon)
     : getPosition(s.datetime, s.observer.lat, s.observer.lon);
-
-  dom.infoNow.textContent = formatTime(s.datetime);
-  if (s.mode === 'reflection') {
-    const ra = reflectAzimuth(p.azimuthDeg);
-    dom.infoNowAz.textContent = `↻ ${Math.round(ra)}° · ${p.altitudeDeg > 0 ? 'above' : 'below'}`;
-  } else {
-    const icon = isMoon ? '🌙 ' : '';
-    dom.infoNowAz.textContent = `${icon}${Math.round(p.azimuthDeg)}° · ${p.altitudeDeg > 0 ? p.altitudeDeg.toFixed(1) + '°' : 'below'}`;
-  }
   const alt = p.altitudeDeg;
   const above = alt > 0;
-  dom.sunAlt.textContent = above ? `↑${alt.toFixed(1)}°` : `↓${Math.abs(alt).toFixed(1)}°`;
+  dom.sunAlt.textContent = above ? `↑${alt.toFixed(1)}° · ${Math.round(p.azimuthDeg)}°` : `↓${Math.abs(alt).toFixed(1)}°`;
   dom.sunAlt.classList.toggle('below', !above);
-}
-
-function updateMoonInfo(s) {
-  if (!dom.moonInfo) return;
-  if (s.mode !== 'moon') { dom.moonInfo.hidden = true; return; }
-  const illum = getMoonIllumination(s.datetime);
-  const phases = ['🌑','🌒','🌓','🌔','🌕','🌖','🌗','🌘'];
-  const icon = phases[Math.round(illum.phase * 8) % 8];
-  dom.moonInfo.textContent = `${icon} ${Math.round(illum.fraction * 100)}% lit`;
-  dom.moonInfo.hidden = false;
 }
 
 function tryGeolocate() {
@@ -369,44 +414,31 @@ function tryGeolocate() {
       store.set({ observer: { lat: pos.coords.latitude, lon: pos.coords.longitude } });
       if (map) map.flyTo({ center: [pos.coords.longitude, pos.coords.latitude], zoom: Math.max(map.getZoom(), 13), duration: 900 });
     },
-    () => { /* ignore */ },
+    () => {},
     { enableHighAccuracy: false, timeout: 6000, maximumAge: 60000 },
   );
 }
 
-function hashHasObserver() {
-  return /[#&]ll=/.test(location.hash);
-}
+function hashHasObserver() { return /[#&]ll=/.test(location.hash); }
 
 function initReflectionDraw(map) {
-  const HOLD_MS = 350;     // hold duration before drawing activates
-  const CANCEL_PX = 10;    // movement during hold that cancels it (user is panning)
+  const HOLD_MS = 350, CANCEL_PX = 10;
+  const UI_SEL = '#dock,#search-results,#cam-hud,#toast';
 
-  const UI_SEL = '#topbar,#info,#modes,#bottom,#search-results,#toast,#hint';
+  let holdTimer = null, holdOrigin = null;
+  let drawing = false, drawStart = null, drawEnd = null;
 
-  let holdTimer = null;
-  let holdOrigin = null;   // { lngLat, point } where finger went down
-  let drawing = false;     // true once hold fires and drag-to-draw is active
-  let drawStart = null;    // { lat, lon }
-  let drawEnd = null;      // { lat, lon } — updated every touchmove
+  const cancelHold = () => { if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; } holdOrigin = null; };
 
-  function cancelHold() {
-    if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
-    holdOrigin = null;
-  }
-
-  function onDown(e) {
-    if (store.get().mode !== 'reflection') return;
+  const onDown = (e) => {
+    if (!store.get().reflectionEnabled) return;
     if (e.originalEvent && e.originalEvent.target && e.originalEvent.target.closest(UI_SEL)) return;
     if (e.originalEvent.touches && e.originalEvent.touches.length !== 1) { cancelHold(); return; }
-
     cancelHold();
     holdOrigin = { lngLat: e.lngLat, point: { x: e.point.x, y: e.point.y } };
-
     holdTimer = setTimeout(() => {
       holdTimer = null;
       if (!holdOrigin) return;
-      // Hold confirmed — activate drawing from this position
       drawing = true;
       drawStart = { lat: holdOrigin.lngLat.lat, lon: holdOrigin.lngLat.lng };
       drawEnd = drawStart;
@@ -415,30 +447,27 @@ function initReflectionDraw(map) {
       updateReflectionWall(map, null);
       updateReflectionNow(map, store.get().observer, store.get().datetime, null);
     }, HOLD_MS);
-  }
+  };
 
-  function onMove(e) {
-    if (store.get().mode !== 'reflection') return;
-    // Cancel pending hold if finger moved too much (user is panning/zooming)
+  const onMove = (e) => {
+    if (!store.get().reflectionEnabled) return;
     if (holdOrigin && !drawing) {
       const dx = e.point.x - holdOrigin.point.x;
       const dy = e.point.y - holdOrigin.point.y;
       if (Math.hypot(dx, dy) > CANCEL_PX) cancelHold();
     }
-    // Live line preview while drawing
     if (drawing && drawStart) {
       drawEnd = { lat: e.lngLat.lat, lon: e.lngLat.lng };
       updateReflectionWall(map, { start: drawStart, end: drawEnd });
     }
-  }
+  };
 
-  function onUp(e) {
+  const onUp = () => {
     cancelHold();
     if (!drawing) return;
     drawing = false;
     map.dragPan.enable();
-    if (drawStart && drawEnd &&
-        Math.hypot((e.point ? e.point.x : 0), (e.point ? e.point.y : 0)) !== 0) {
+    if (drawStart && drawEnd) {
       reflectionLine = { start: drawStart, end: drawEnd };
       updateReflectionWall(map, reflectionLine);
       const s = store.get();
@@ -446,50 +475,28 @@ function initReflectionDraw(map) {
     }
     drawStart = null;
     drawEnd = null;
-  }
+  };
 
-  map.on('mousedown',   onDown);
-  map.on('mousemove',   onMove);
-  map.on('mouseup',     onUp);
-  map.on('touchstart',  onDown);
-  map.on('touchmove',   onMove);
-  map.on('touchend',    onUp);
+  map.on('mousedown', onDown);  map.on('mousemove', onMove);  map.on('mouseup', onUp);
+  map.on('touchstart', onDown); map.on('touchmove', onMove); map.on('touchend', onUp);
   map.on('touchcancel', onUp);
 }
 
 function attachLongPress(map, cb) {
-  let timer = null;
-  let startPos = null;
-  let cancelled = false;
-
+  let timer = null, startPos = null, cancelled = false;
   const start = (e) => {
     cancelled = false;
-    const lngLat = e.lngLat;
-    const point = e.point;
-    startPos = point;
+    startPos = e.point;
     if (timer) clearTimeout(timer);
-    timer = setTimeout(() => {
-      if (!cancelled) cb(lngLat);
-    }, 550);
+    timer = setTimeout(() => { if (!cancelled) cb(e.lngLat); }, 550);
   };
   const move = (e) => {
     if (!startPos) return;
-    const dx = e.point.x - startPos.x;
-    const dy = e.point.y - startPos.y;
-    if (Math.hypot(dx, dy) > 6) cancelled = true;
+    if (Math.hypot(e.point.x - startPos.x, e.point.y - startPos.y) > 6) cancelled = true;
   };
-  const end = () => {
-    if (timer) clearTimeout(timer);
-    timer = null;
-    startPos = null;
-  };
-
-  map.on('mousedown', start);
-  map.on('mousemove', move);
-  map.on('mouseup', end);
-  map.on('touchstart', start);
-  map.on('touchmove', move);
-  map.on('touchend', end);
+  const end = () => { if (timer) clearTimeout(timer); timer = null; startPos = null; };
+  map.on('mousedown', start); map.on('mousemove', move); map.on('mouseup', end);
+  map.on('touchstart', start); map.on('touchmove', move); map.on('touchend', end);
   map.on('dragstart', () => { cancelled = true; if (timer) { clearTimeout(timer); timer = null; } });
 }
 
@@ -501,11 +508,21 @@ function showToast(msg) {
   toastTimer = setTimeout(() => { dom.toast.hidden = true; }, 2200);
 }
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
+// Global error trap → show in toast (so we can see what's broken on mobile)
+window.addEventListener('error', (e) => {
+  const msg = (e && e.message) || 'unknown error';
+  const t = document.getElementById('toast');
+  if (t) { t.textContent = 'JS: ' + msg; t.hidden = false; }
+});
+window.addEventListener('unhandledrejection', (e) => {
+  const msg = (e.reason && (e.reason.message || e.reason.toString())) || 'rejection';
+  const t = document.getElementById('toast');
+  if (t) { t.textContent = 'Promise: ' + msg; t.hidden = false; }
+});
 
 main().catch((e) => {
   console.error(e);
-  document.body.innerHTML = `<div style="padding:20px;color:#fff;">Failed to start: ${e.message}</div>`;
+  const t = document.getElementById('toast');
+  if (t) { t.textContent = 'main(): ' + e.message; t.hidden = false; }
+  else document.body.insertAdjacentHTML('beforeend', `<div style="position:fixed;top:60px;left:10px;right:10px;padding:12px;background:#400;color:#fff;z-index:99;border-radius:8px;font:13px monospace;">main(): ${e.message}</div>`);
 });

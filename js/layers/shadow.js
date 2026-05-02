@@ -1,190 +1,199 @@
-// Shadow + sun-ray visualization for Shadow mode.
+// Shadow visualization (Shadow mode):
+//   - Caster sphere (light blue) at observer position, lifted to caster height in metres.
+//   - Vertical pole (light blue) from caster ground point up to the sphere.
+//   - Sky→caster line: from the live sun/moon arc point through the caster.
+//   - Caster→ground extension: continues to the shadow-end ground point.
+//   - Solid filled circle at the shadow endpoint, in body colour.
 //
-// Shadow ray: cast from observer in the OPPOSITE sun direction.
-// Flat-ground fallback renders instantly; async terrain + building refinement updates after.
-// Sun ray: long dashed line toward sun direction.
+// Lines are drawn with a maplibre line layer for the GROUND segment, and an
+// HTML+SVG overlay tied to map.project() for the 3D portions.
 
 import { getPosition, getMoonPos } from '../solar.js';
 import { destination } from '../util.js';
-import { sampleElevationAlongLine, getElevation } from '../terrain.js';
-import { findBuildingObstruction } from '../buildings.js';
+import { getLiveBodyAnchor } from './sun-path.js';
 
 const SHADOW_SRC      = 'shadow-src';
 const SHADOW_LINE     = 'shadow-line';
-const SHADOW_END_SRC  = 'shadow-end-src';
-const SHADOW_END_DOT  = 'shadow-end-dot';
-const LONG_RAY_SRC    = 'shadow-ray-src';
-const LONG_RAY_LINE   = 'shadow-ray-line';
 
-const OBJECT_H_M    = 10;    // virtual caster height in metres (generic building edge)
-const MAX_SHADOW_KM = 2.0;   // max shadow ray length to march
-const STEP_M        = 25;    // terrain sampling step
+let OBJECT_H_M      = 10;
+const MAX_SHADOW_KM = 4.0;
+let mapRef = null;
+let casterMarker = null;
+let casterPole = null;
+let endMarker = null;
+let svgOverlay = null;     // SVG overlay for the 3D sky→caster line
+let mode = 'sun';
+let observerCache = null;
+let datetimeCache = null;
+let visible = false;
 
-let pendingToken = null;
-
-// ── Setup ─────────────────────────────────────────────────────────────────────
+export function setShadowHeight(h) {
+  OBJECT_H_M = Math.max(0.5, +h || 10);
+  if (visible) update();
+}
 
 export function addShadowLayer(map) {
+  mapRef = map;
   if (map.getSource(SHADOW_SRC)) return;
   const empty = { type: 'FeatureCollection', features: [] };
+  map.addSource(SHADOW_SRC, { type: 'geojson', data: empty });
 
-  map.addSource(SHADOW_SRC,     { type: 'geojson', data: empty });
-  map.addSource(SHADOW_END_SRC, { type: 'geojson', data: empty });
-  map.addSource(LONG_RAY_SRC,   { type: 'geojson', data: empty });
-
-  // Long sun/moon ray toward celestial body (dashed, warm/silver)
-  map.addLayer({
-    id: LONG_RAY_LINE, type: 'line', source: LONG_RAY_SRC,
-    layout: { 'line-cap': 'round', visibility: 'none' },
-    paint: {
-      'line-color': '#fff1c2',
-      'line-width': 1.5,
-      'line-opacity': 0.45,
-      'line-dasharray': [4, 3],
-    },
-  });
-
-  // Shadow line (dark, semi-transparent)
+  // Ground shadow line (caster→endpoint), colour swapped per mode at runtime.
   map.addLayer({
     id: SHADOW_LINE, type: 'line', source: SHADOW_SRC,
     layout: { 'line-cap': 'round', visibility: 'none' },
-    paint: {
-      'line-color': '#0d1630',
-      'line-width': 5,
-      'line-opacity': 0.72,
-      'line-blur': 1,
-    },
+    paint: { 'line-color': '#ffb845', 'line-width': 4, 'line-opacity': 0.9 },
   });
 
-  // Shadow endpoint dot
-  map.addLayer({
-    id: SHADOW_END_DOT, type: 'circle', source: SHADOW_END_SRC,
-    layout: { visibility: 'none' },
-    paint: {
-      'circle-radius': 5,
-      'circle-color': '#0d1630',
-      'circle-opacity': 0.7,
-      'circle-stroke-color': '#3d5aad',
-      'circle-stroke-width': 1.5,
-    },
-  });
+  // Build SVG overlay for the 3D sky→caster line
+  svgOverlay = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svgOverlay.id = 'shadow-svg';
+  svgOverlay.setAttribute('style', 'position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:2;');
+  const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  line.setAttribute('id', 'shadow-3d-line');
+  line.setAttribute('stroke', '#ffb845');
+  line.setAttribute('stroke-width', '3');
+  line.setAttribute('stroke-linecap', 'round');
+  line.setAttribute('opacity', '0.9');
+  svgOverlay.appendChild(line);
+  document.body.appendChild(svgOverlay);
+  svgOverlay.style.display = 'none';
+
+  map.on('move', renderOverlay);
+  map.on('zoom', renderOverlay);
 }
 
-export function setShadowVisible(map, visible) {
-  const v = visible ? 'visible' : 'none';
-  for (const id of [SHADOW_LINE, SHADOW_END_DOT, LONG_RAY_LINE]) {
-    if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', v);
+export function setShadowVisible(map, vis) {
+  visible = !!vis;
+  const v = vis ? 'visible' : 'none';
+  if (map.getLayer(SHADOW_LINE)) map.setLayoutProperty(SHADOW_LINE, 'visibility', v);
+  if (svgOverlay) svgOverlay.style.display = vis ? '' : 'none';
+  toggleMarkers(vis);
+  if (vis) update();
+}
+
+function toggleMarkers(show) {
+  if (!show) {
+    if (casterMarker) { casterMarker.remove(); casterMarker = null; }
+    if (casterPole) { casterPole.remove(); casterPole = null; }
+    if (endMarker) { endMarker.remove(); endMarker = null; }
   }
 }
 
-// ── Update ────────────────────────────────────────────────────────────────────
-
-/**
- * Update shadow + ray visualization.
- * moonMode: if true, uses moon position instead of sun.
- */
 export function updateShadow(map, observer, datetime, moonMode = false) {
+  observerCache = observer;
+  datetimeCache = datetime;
+  mode = moonMode ? 'moon' : 'sun';
+  if (!visible) return;
+  update();
+}
+
+function metresToPixels(metres, lat) {
+  if (!mapRef) return 0;
+  const mPerPx = 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, mapRef.getZoom());
+  return metres / mPerPx;
+}
+
+function update() {
+  if (!observerCache || !mapRef) return;
+  const observer = observerCache;
+  const datetime = datetimeCache;
+  const moonMode = mode === 'moon';
+  const colour = moonMode ? '#d0d8e8' : '#ffb845';
   const p = moonMode
     ? getMoonPos(datetime, observer.lat, observer.lon)
     : getPosition(datetime, observer.lat, observer.lon);
 
   const { lat, lon } = observer;
+  const aboveHorizon = p.altitudeDeg > 0.5;
 
-  // Long ray toward celestial body
-  if (p.altitudeDeg > -2) {
-    const rayEnd = destination(lat, lon, p.azimuthDeg, MAX_SHADOW_KM * 1.8);
-    setLine(map, LONG_RAY_SRC, [[lon, lat], rayEnd]);
+  // Update ground shadow line colour
+  mapRef.setPaintProperty(SHADOW_LINE, 'line-color', colour);
+
+  // Caster marker (light blue sphere) — vertical offset = caster height in pixels at current zoom
+  const offsetPx = metresToPixels(OBJECT_H_M, lat);
+  if (!casterMarker) {
+    const dot = document.createElement('div');
+    dot.className = 'caster-sphere';
+    casterMarker = new maplibregl.Marker({ element: dot, offset: [0, -offsetPx] })
+      .setLngLat([lon, lat]).addTo(mapRef);
   } else {
-    clear(map, LONG_RAY_SRC);
+    casterMarker.setLngLat([lon, lat]);
+    casterMarker.setOffset([0, -offsetPx]);
   }
 
-  // No shadow when body is below horizon
-  if (p.altitudeDeg < 0.5) {
-    clear(map, SHADOW_SRC);
-    clear(map, SHADOW_END_SRC);
-    return;
+  // Caster pole (vertical light blue line below the sphere down to ground)
+  if (!casterPole) {
+    const pole = document.createElement('div');
+    pole.className = 'caster-pole';
+    casterPole = new maplibregl.Marker({ element: pole, offset: [0, -offsetPx / 2], anchor: 'center' })
+      .setLngLat([lon, lat]).addTo(mapRef);
+  } else {
+    casterPole.setLngLat([lon, lat]);
+    casterPole.setOffset([0, -offsetPx / 2]);
   }
+  casterPole.getElement().style.height = Math.max(0, offsetPx) + 'px';
 
-  const shadowAz = (p.azimuthDeg + 180) % 360;
-  const tanEl = Math.tan(p.altitudeDeg * Math.PI / 180);
-  const flatKm = Math.min((OBJECT_H_M / tanEl) / 1000, MAX_SHADOW_KM);
+  // Shadow endpoint on ground
+  if (aboveHorizon) {
+    const tanEl = Math.tan(p.altitudeDeg * Math.PI / 180);
+    const flatKm = Math.min((OBJECT_H_M / tanEl) / 1000, MAX_SHADOW_KM);
+    const shadowAz = (p.azimuthDeg + 180) % 360;
+    const endLngLat = destination(lat, lon, shadowAz, flatKm);
 
-  // 1. Check building obstruction synchronously (uses already-rendered features)
-  const building = findBuildingObstruction(map, observer, p.azimuthDeg, p.altitudeDeg, 500);
-  if (building) {
-    // Shadow blocked by a building: shorten to building distance
-    const blockedKm = Math.min(building.distanceM / 1000, flatKm);
-    const blockedEnd = destination(lat, lon, shadowAz, blockedKm);
-    setLine(map, SHADOW_SRC, [[lon, lat], blockedEnd]);
-    setPoint(map, SHADOW_END_SRC, blockedEnd);
-    clear(map, LONG_RAY_SRC); // ray is blocked, don't show it past the building
-    return;
-  }
+    // Ground line (caster ground point → endpoint)
+    setLine(mapRef, SHADOW_SRC, [[lon, lat], endLngLat]);
 
-  // 2. Flat fallback renders instantly
-  const flatEnd = destination(lat, lon, shadowAz, flatKm);
-  setLine(map, SHADOW_SRC, [[lon, lat], flatEnd]);
-  setPoint(map, SHADOW_END_SRC, flatEnd);
-
-  // Cancel any pending async computation
-  if (pendingToken) pendingToken.cancelled = true;
-  const token = { cancelled: false };
-  pendingToken = token;
-
-  // 3. Async terrain-aware refinement
-  computeTerrainShadow(lat, lon, p.altitudeDeg, shadowAz).then((terrainEnd) => {
-    if (token.cancelled) return;
-    if (terrainEnd) {
-      setLine(map, SHADOW_SRC, [[lon, lat], terrainEnd]);
-      setPoint(map, SHADOW_END_SRC, terrainEnd);
+    if (!endMarker) {
+      const dot = document.createElement('div');
+      dot.className = 'shadow-end';
+      endMarker = new maplibregl.Marker({ element: dot }).setLngLat(endLngLat).addTo(mapRef);
+    } else {
+      endMarker.setLngLat(endLngLat);
+      endMarker.getElement().style.background = colour;
     }
-  });
+  } else {
+    setLine(mapRef, SHADOW_SRC, []);
+    if (endMarker) { endMarker.remove(); endMarker = null; }
+  }
+
+  renderOverlay();
 }
 
-async function computeTerrainShadow(lat, lon, sunElDeg, shadowAzDeg) {
-  try {
-    const [observerElev, samples] = await Promise.all([
-      getElevation(lat, lon),
-      sampleElevationAlongLine(lat, lon, shadowAzDeg, MAX_SHADOW_KM * 1000, STEP_M),
-    ]);
+function renderOverlay() {
+  if (!visible || !svgOverlay || !mapRef || !observerCache) return;
+  const line = svgOverlay.querySelector('#shadow-3d-line');
+  if (!line) return;
+  const colour = mode === 'moon' ? '#d0d8e8' : '#ffb845';
+  line.setAttribute('stroke', colour);
 
-    const tanEl = Math.tan(sunElDeg * Math.PI / 180);
+  // 3D sky→caster line: from the live body anchor (sun/moon dot in arc)
+  // through the caster sphere, in screen space.
+  const body = getLiveBodyAnchor();
+  if (!body) { line.setAttribute('opacity', '0'); return; }
 
-    for (const { distance, elevation } of samples) {
-      if (distance < 1) continue;
-      // Height of sun ray above observer ground level at this distance
-      const rayH = observerElev + OBJECT_H_M - distance * tanEl;
-      if (elevation >= rayH) {
-        const [endLon, endLat] = destination(lat, lon, shadowAzDeg, distance / 1000);
-        return [endLon, endLat];
-      }
-    }
-  } catch {
-    // Network error or CORS → silent fallback to flat shadow
-  }
-  return null;
-}
+  const bodyScreen = mapRef.project([body.lon, body.lat]);
+  const casterGround = mapRef.project([observerCache.lon, observerCache.lat]);
+  const casterPx = metresToPixels(OBJECT_H_M, observerCache.lat);
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+  const x1 = bodyScreen.x + body.offsetPx[0];
+  const y1 = bodyScreen.y + body.offsetPx[1];
+  const x2 = casterGround.x;
+  const y2 = casterGround.y - casterPx;
 
-function clear(map, srcId) {
-  map.getSource(srcId)?.setData({ type: 'FeatureCollection', features: [] });
+  line.setAttribute('x1', x1);
+  line.setAttribute('y1', y1);
+  line.setAttribute('x2', x2);
+  line.setAttribute('y2', y2);
+  line.setAttribute('opacity', '0.9');
 }
 
 function setLine(map, srcId, coords) {
   const src = map.getSource(srcId);
-  if (!src || coords.length < 2) { clear(map, srcId); return; }
+  if (!src) return;
+  if (!coords || coords.length < 2) { src.setData({ type: 'FeatureCollection', features: [] }); return; }
   src.setData({
     type: 'FeatureCollection',
     features: [{ type: 'Feature', geometry: { type: 'LineString', coordinates: coords }, properties: {} }],
-  });
-}
-
-function setPoint(map, srcId, lonlat) {
-  const src = map.getSource(srcId);
-  if (!src || !lonlat) { clear(map, srcId); return; }
-  src.setData({
-    type: 'FeatureCollection',
-    features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: lonlat }, properties: {} }],
   });
 }

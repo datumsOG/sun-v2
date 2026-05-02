@@ -2,26 +2,29 @@
 
 :root {
   --bg: #0b0e14;
-  --surface: rgba(18, 22, 30, 0.72);
-  --surface-strong: rgba(22, 27, 36, 0.92);
+  --surface: rgba(18, 22, 30, 0.78);
+  --surface-strong: rgba(22, 27, 36, 0.94);
   --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.16);
+  --border-strong: rgba(255, 255, 255, 0.18);
   --text: #f3f4f6;
   --text-dim: rgba(243, 244, 246, 0.62);
   --text-faint: rgba(243, 244, 246, 0.38);
   --gold: #ffb845;
   --gold-soft: rgba(255, 184, 69, 0.22);
+  --moonblue: #d0d8e8;
+  --moonblue-soft: rgba(208, 216, 232, 0.18);
   --sun-rise: #ff8a3d;
   --sun-set: #ff5e3d;
   --sun-mid: #fff1c2;
   --reflect: #4dd2ff;
   --reflect-soft: rgba(77, 210, 255, 0.22);
+  --shadow-clr: #3d5aad;
+  --shadow-soft: rgba(61, 90, 173, 0.22);
   --twilight-civil: rgba(38, 64, 110, 0.55);
   --twilight-nautical: rgba(20, 32, 60, 0.65);
   --twilight-astro: rgba(8, 12, 28, 0.75);
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(255, 255, 255, 0.06) inset;
-  --radius: 14px;
-  --radius-lg: 20px;
+  --radius: 16px;
 
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -36,38 +39,29 @@ html, body {
   height: 100%; width: 100%;
   background: var(--bg);
   color: var(--text);
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   font-size: 15px;
   line-height: 1.4;
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  touch-action: manipulation;
   overflow: hidden;
   overscroll-behavior: none;
-  text-rendering: optimizeLegibility;
 }
 
-button {
-  font-family: inherit;
-  color: inherit;
-  background: none;
-  border: 0;
-  cursor: pointer;
-  padding: 0;
-}
+/* Map needs pan/pinch but UI must not respond to page pinch zoom */
+#dock, #cam-hud, #toast, #hint { touch-action: manipulation; }
 
+button { font-family: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 0; }
 input { font-family: inherit; color: inherit; }
 
-/* ===== Map fills the viewport ===== */
-#map {
-  position: fixed;
-  inset: 0;
-  background: var(--bg);
-}
-
-.maplibregl-ctrl-attrib { display: none !important; }
+#map { position: fixed; inset: 0; background: var(--bg); }
+.maplibregl-ctrl-attrib,
+.maplibregl-ctrl-bottom-left,
+.maplibregl-ctrl-bottom-right { display: none !important; }
 .maplibregl-canvas { outline: none !important; }
 
-/* ===== Glass surfaces ===== */
 .glass {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -77,226 +71,31 @@ input { font-family: inherit; color: inherit; }
   box-shadow: var(--shadow);
 }
 
-/* ===== Top bar (search) ===== */
-#topbar {
+/* ===== Bottom dock — slider + time + controls ===== */
+#dock {
   position: fixed;
-  top: calc(12px + var(--safe-top));
-  left: calc(12px + var(--safe-left));
-  right: calc(12px + var(--safe-right));
+  bottom: calc(8px + var(--safe-bottom));
+  left: calc(6px + var(--safe-left));
+  right: calc(6px + var(--safe-right));
   z-index: 5;
-  padding: 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  max-width: 560px;
+  padding: 10px 8px 10px;
+  max-width: 760px;
   margin: 0 auto;
 }
 
-#search-wrap {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 8px 0 12px;
-  height: 44px;
-}
-
-#search-wrap .icon { color: var(--text-faint); flex: 0 0 auto; }
-
-#search {
-  flex: 1;
-  border: 0;
-  background: transparent;
-  outline: none;
-  font-size: 15px;
-  height: 100%;
-  min-width: 0;
-}
-#search::placeholder { color: var(--text-faint); }
-
-#search-results {
-  list-style: none;
-  margin: 6px 0 0;
-  padding: 4px;
-  max-height: 280px;
-  overflow-y: auto;
-  border-top: 1px solid var(--border);
-}
-#search-results li {
-  padding: 10px 12px;
-  border-radius: 10px;
-  cursor: pointer;
-  font-size: 14px;
-  color: var(--text-dim);
-  transition: background 120ms ease;
-}
-#search-results li:hover, #search-results li.active {
-  background: rgba(255,255,255,0.06);
-  color: var(--text);
-}
-#search-results .result-name { color: var(--text); }
-#search-results .result-sub { color: var(--text-faint); font-size: 12px; margin-top: 2px; }
-
-/* ===== Info card (sunrise/sunset/now) ===== */
-#info {
-  position: fixed;
-  top: calc(72px + var(--safe-top));
-  left: calc(12px + var(--safe-left));
-  z-index: 4;
-  padding: 12px 14px;
-  min-width: 200px;
-  max-width: 260px;
-  animation: fadein 240ms ease-out;
-}
-
-.info-row { display: flex; gap: 14px; }
-.info-col { flex: 1; min-width: 0; }
-.info-label {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-faint);
-  font-weight: 600;
-}
-.info-value {
-  font-size: 18px;
-  font-weight: 600;
-  margin-top: 2px;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
-}
-.info-sub {
-  font-size: 11px;
-  color: var(--text-dim);
-  margin-top: 1px;
-  font-variant-numeric: tabular-nums;
-}
-
-#info-sunrise { color: var(--sun-rise); }
-#info-sunset { color: var(--sun-set); }
-
-.alignment {
-  margin-top: 10px;
-  padding: 10px 12px;
-  background: var(--gold-soft);
-  border: 1px solid rgba(255, 184, 69, 0.35);
-  border-radius: 10px;
-  position: relative;
-  animation: fadein 200ms ease-out;
-}
-.alignment-label {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--gold);
-  font-weight: 700;
-}
-.alignment-detail {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 4px;
-}
-#alignment-when { font-size: 13px; }
-.closebtn {
-  position: absolute;
-  top: 4px;
-  right: 6px;
-  font-size: 18px;
-  color: var(--text-dim);
-  width: 22px; height: 22px;
-  line-height: 1;
-}
-
-/* ===== Modes (right-side stack) ===== */
-#modes {
-  position: fixed;
-  top: calc(72px + var(--safe-top));
-  right: calc(12px + var(--safe-right));
-  z-index: 4;
-  padding: 4px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.mode-btn, .iconbtn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 44px;
-  min-width: 44px;
-  padding: 0 12px;
-  border-radius: 10px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-dim);
-  transition: background 140ms ease, color 140ms ease;
-}
-.mode-btn span { display: none; }
-@media (min-width: 380px) { .mode-btn span { display: inline; } }
-
-.mode-btn.active {
-  background: rgba(255, 255, 255, 0.10);
-  color: var(--text);
-}
-.mode-btn[data-mode="sun"].active { color: var(--gold); }
-.mode-btn[data-mode="reflection"].active { color: var(--reflect); background: var(--reflect-soft); }
-
-.iconbtn:hover, .mode-btn:hover { background: rgba(255,255,255,0.06); color: var(--text); }
-.iconbtn.active { color: var(--gold); background: var(--gold-soft); }
-
-.ghostbtn {
-  height: 28px;
-  padding: 0 10px;
-  border-radius: 7px;
-  font-size: 12px;
-  background: rgba(255,255,255,0.06);
-  color: var(--text);
-  font-weight: 500;
-}
-.ghostbtn:hover { background: rgba(255,255,255,0.12); }
-
-/* ===== Bottom panel (chart + scrubber) ===== */
-#bottom {
-  position: fixed;
-  bottom: calc(12px + var(--safe-bottom));
-  left: calc(12px + var(--safe-left));
-  right: calc(12px + var(--safe-right));
-  z-index: 5;
-  padding: 10px 12px 12px;
-  max-width: 720px;
-  margin: 0 auto;
-}
-
-#chart {
-  width: 100%;
-  height: 110px;
-  display: block;
-  pointer-events: none;
-}
-
-#scrubber-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 6px;
-}
-
+/* ----- Slider: full-width within dock ----- */
 #scrubber-wrap {
-  flex: 1;
   position: relative;
   height: 36px;
   display: flex;
   align-items: center;
+  padding: 0 4px;
 }
 
 #scrubber {
-  -webkit-appearance: none;
-  appearance: none;
+  -webkit-appearance: none; appearance: none;
   width: 100%;
-  height: 4px;
+  height: 5px;
   background: linear-gradient(90deg,
     var(--twilight-astro) 0%,
     var(--twilight-nautical) 8%,
@@ -311,10 +110,18 @@ input { font-family: inherit; color: inherit; }
   outline: none;
 }
 
+body.mode-moon #scrubber {
+  background: linear-gradient(90deg,
+    rgba(8,12,28,0.85) 0%,
+    rgba(40,52,90,0.7) 25%,
+    var(--moonblue) 50%,
+    rgba(40,52,90,0.7) 75%,
+    rgba(8,12,28,0.85) 100%);
+}
+
 #scrubber::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 22px; height: 22px;
+  -webkit-appearance: none; appearance: none;
+  width: 24px; height: 24px;
   border-radius: 50%;
   background: #fff;
   border: 2px solid #000;
@@ -322,155 +129,369 @@ input { font-family: inherit; color: inherit; }
   cursor: grab;
 }
 #scrubber::-moz-range-thumb {
-  width: 22px; height: 22px;
-  border-radius: 50%;
-  background: #fff;
-  border: 2px solid #000;
-  cursor: grab;
+  width: 24px; height: 24px; border-radius: 50%;
+  background: #fff; border: 2px solid #000; cursor: grab;
 }
-#scrubber:active::-webkit-slider-thumb { cursor: grabbing; }
 
 #scrubber-ticks {
   position: absolute;
-  left: 0; right: 0;
+  left: 4px; right: 4px;
   top: 50%;
-  height: 12px;
+  height: 14px;
   transform: translateY(-50%);
   pointer-events: none;
 }
 .tick {
-  position: absolute;
-  top: 0;
-  width: 2px; height: 12px;
-  background: rgba(255,255,255,0.6);
+  position: absolute; top: 0;
+  width: 2px; height: 14px;
+  background: rgba(255,255,255,0.7);
   border-radius: 1px;
   transform: translateX(-1px);
 }
 .tick.sunrise { background: var(--sun-rise); }
-.tick.sunset { background: var(--sun-set); }
+.tick.sunset  { background: var(--sun-set); }
 
-#time-readout {
+#moon-phase-marker {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 2px);
+  transform: translateX(-50%);
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(circle at 30% 30%, #f0f3fa, #b6c2d8 70%, #7a8aa8 100%);
+  box-shadow: 0 0 8px rgba(208,216,232,0.4);
+}
+#moon-phase-marker::after {
+  content: '';
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  /* shadow overlay computed inline by JS via clip-path */
+  background: rgba(8,10,18,0.92);
+  clip-path: var(--moon-clip, inset(0 50% 0 0));
+}
+
+/* ----- Time row (under slider) ----- */
+#time-row {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
-  min-width: 64px;
+  align-items: baseline;
+  gap: 10px;
+  padding: 14px 8px 4px;
+  font-variant-numeric: tabular-nums;
 }
 #time-hh {
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 600;
-  font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
-}
-#sun-alt {
-  min-width: 52px;
-  text-align: center;
-  font-size: 14px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
-  color: var(--gold);
-  line-height: 1.1;
-}
-#sun-alt.below {
-  color: var(--text-dim);
 }
 #date-btn {
+  font-size: 14px;
+  color: var(--text);
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.08);
+  font-weight: 500;
+}
+#sun-alt {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gold);
+  margin-left: auto;
+}
+#sun-alt.below { color: var(--text-dim); }
+body.mode-moon #sun-alt:not(.below) { color: var(--moonblue); }
+
+#rise-set {
   font-size: 11px;
   color: var(--text-dim);
-  height: auto;
-  padding: 2px 6px;
-  background: transparent;
+  display: flex;
+  gap: 8px;
+  white-space: nowrap;
 }
-#date-btn:hover { background: rgba(255,255,255,0.06); }
+#rise-label { color: var(--sun-rise); }
+#set-label  { color: var(--sun-set); }
+body.mode-moon #rise-label, body.mode-moon #set-label { color: var(--moonblue); }
 
-/* ===== Toast / hint ===== */
-#toast, #hint {
+/* ----- Control row ----- */
+#control-row {
+  display: flex;
+  gap: 6px;
+  padding: 8px 4px 2px;
+  justify-content: space-between;
+}
+
+.ctlbtn {
+  flex: 1;
+  height: 46px;
+  min-width: 38px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.06);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 140ms ease, color 140ms ease, opacity 140ms ease;
+}
+.ctlbtn:hover { background: rgba(255,255,255,0.12); }
+.ctlbtn:disabled,
+.ctlbtn.disabled {
+  opacity: 0.32;
+  pointer-events: none;
+}
+
+.ctlbtn .ico { display: block; }
+.ctlbtn .ico.hide { display: none !important; }
+
+/* On/off toggle visual: filled when active */
+.ctlbtn.toggle.active {
+  background: var(--gold-soft);
+  color: var(--gold);
+  box-shadow: inset 0 0 0 1px rgba(255,184,69,0.4);
+}
+#compass-toggle.active   { background: rgba(120,200,255,0.18); color: #78c8ff; box-shadow: inset 0 0 0 1px rgba(120,200,255,0.4); }
+#shadow-toggle.active    { background: var(--shadow-soft); color: var(--shadow-clr); box-shadow: inset 0 0 0 1px rgba(61,90,173,0.5); }
+#reflection-toggle.active { background: var(--reflect-soft); color: var(--reflect); box-shadow: inset 0 0 0 1px rgba(77,210,255,0.4); }
+
+#body-toggle { color: var(--gold); }
+body.mode-moon #body-toggle { color: var(--moonblue); }
+
+.ghostbtn {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font-size: 12px;
+  background: rgba(255,255,255,0.06);
+  color: var(--text);
+}
+
+/* ----- Alignment card (small, inside dock) ----- */
+#alignment-card {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: var(--gold-soft);
+  border: 1px solid rgba(255, 184, 69, 0.35);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+#alignment-when { flex: 1; }
+.closebtn {
+  font-size: 18px;
+  color: var(--text-dim);
+  width: 22px; height: 22px;
+}
+
+/* Shadow elevation panel */
+#shadow-elev-panel {
+  margin-top: 8px;
+  padding: 6px 10px;
+  background: var(--shadow-soft);
+  border: 1px solid rgba(61, 90, 173, 0.4);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--shadow-clr);
+}
+#shadow-elev-panel label { font-weight: 600; white-space: nowrap; }
+#shadow-elev { flex: 1; height: 4px; }
+#shadow-elev-val { font-variant-numeric: tabular-nums; min-width: 44px; text-align: right; }
+
+/* ===== Vertical sliders (right edge) =====
+   We position them by computing top/bottom against the dock.
+   Tilt slider: top 1/3 of available space.
+   Radius slider: lower 2/3.
+   "Available" = from top of viewport to top of dock. */
+.vslider {
+  position: fixed;
+  right: 6px;
+  -webkit-appearance: slider-vertical;
+  appearance: slider-vertical;
+  writing-mode: bt-lr;
+  width: 26px;
+  z-index: 4;
+  background: transparent;
+  /* Hide native track on platforms that don't honor slider-vertical */
+}
+.vslider::-webkit-slider-runnable-track {
+  width: 4px;
+  background: rgba(255,255,255,0.18);
+  border-radius: 2px;
+}
+.vslider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.95);
+  border: 2px solid #000;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+}
+.vslider::-moz-range-thumb {
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.95);
+  border: 2px solid #000;
+}
+.vslider.tilt   { top: calc(8px + var(--safe-top)); height: calc(33vh - 16px); }
+.vslider.radius { top: calc(33vh + 8px);            height: calc(67vh - 280px); }
+
+/* Hint banner */
+#hint {
+  position: fixed;
+  top: calc(12px + var(--safe-top));
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 16px;
+  font-size: 13px;
+  z-index: 6;
+  border-radius: 999px;
+  background: var(--surface-strong);
+  white-space: nowrap;
+}
+
+/* 3D arc markers placed via maplibregl.Marker */
+.arc-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff1c2 30%, rgba(255,184,69,0.9) 70%, rgba(255,184,69,0) 100%);
+  box-shadow: 0 0 6px rgba(255,184,69,0.7);
+  pointer-events: none;
+}
+body.mode-moon .arc-dot {
+  background: radial-gradient(circle, #f0f3fa 30%, rgba(208,216,232,0.85) 70%, rgba(208,216,232,0) 100%);
+  box-shadow: 0 0 6px rgba(208,216,232,0.5);
+}
+.arc-dot.head {
+  width: 14px; height: 14px;
+  background: radial-gradient(circle, #fff1c2, var(--gold) 60%, rgba(255,184,69,0) 100%);
+  box-shadow: 0 0 18px 6px rgba(255,184,69,0.6);
+}
+
+/* Shadow-mode 3D markers */
+.caster-sphere {
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #c8e6ff, #4dd2ff 70%, #1d6ea8 100%);
+  box-shadow: 0 0 8px rgba(77,210,255,0.6);
+  pointer-events: none;
+}
+.caster-pole {
+  width: 2px;
+  background: rgba(77,210,255,0.85);
+  box-shadow: 0 0 4px rgba(77,210,255,0.6);
+  pointer-events: none;
+  transform-origin: bottom center;
+}
+.shadow-end {
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 6px rgba(255,184,69,0.6);
+  pointer-events: none;
+}
+body.mode-moon .shadow-end {
+  background: var(--moonblue);
+  box-shadow: 0 0 6px rgba(208,216,232,0.5);
+}
+
+/* ===== Toast ===== */
+#toast {
   position: fixed;
   left: 50%;
   transform: translateX(-50%);
+  bottom: calc(220px + var(--safe-bottom));
   padding: 10px 16px;
   font-size: 13px;
   z-index: 20;
   border-radius: 999px;
   white-space: nowrap;
-  animation: fadeup 240ms ease-out;
-}
-#toast { bottom: calc(180px + var(--safe-bottom)); }
-#hint {
-  top: calc(72px + var(--safe-top));
-  background: var(--surface-strong);
 }
 
-/* ===== Arrow / AR view ===== */
-#arrow-view {
+/* ===== Camera view ===== */
+#camera-view {
   position: fixed;
   inset: 0;
-  z-index: 3; /* above map (0), below modes (4) and bottom (5) */
-  background: radial-gradient(ellipse at top, #1a1d28 0%, #0b0e14 60%);
+  z-index: 3;
+  background: #000;
 }
-
-#arrow-canvas {
-  position: absolute;
-  inset: 0;
-  width: 100%; height: 100%;
-  display: block;
-  touch-action: none;
-}
-
-#arrow-video {
+#cam-video {
   position: absolute;
   inset: 0;
   width: 100%; height: 100%;
   object-fit: cover;
 }
 
-/* 2D guide arrow — centered, rotates to point at sun */
+/* Camera mode hides map chrome but keeps the dock visible */
+body.view-camera #map { visibility: hidden; }
+
+/* Sun or moon disk overlay */
+#body-disk {
+  position: fixed;
+  width: 78px; height: 78px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 6;
+}
+body.mode-sun #body-disk {
+  background: radial-gradient(circle, rgba(255,241,194,0.95) 0%, rgba(255,184,69,0.6) 45%, transparent 100%);
+  box-shadow: 0 0 40px 20px rgba(255,184,69,0.45), 0 0 80px 40px rgba(255,184,69,0.2);
+  animation: sun-pulse 2.4s ease-in-out infinite;
+}
+body.mode-moon #body-disk {
+  width: 70px; height: 70px;
+  background: radial-gradient(circle at 35% 35%, #f0f3fa, #b6c2d8 70%, #7a8aa8 100%);
+  box-shadow: 0 0 28px 8px rgba(208,216,232,0.35);
+  overflow: hidden;
+}
+#body-disk-shadow {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: rgba(8,10,18,0.92);
+  clip-path: var(--moon-clip, inset(0 50% 0 0));
+  display: none;
+}
+body.mode-moon #body-disk-shadow { display: block; }
+
+@keyframes sun-pulse {
+  0%, 100% { transform: translate(-50%, -50%) scale(1);    opacity: 0.92; }
+  50%       { transform: translate(-50%, -50%) scale(1.10); opacity: 1; }
+}
+
 #guide-arrow {
   position: fixed;
-  top: 50%;
-  left: 50%;
+  top: 50%; left: 50%;
   transform: translate(-50%, -50%);
   width: 40px; height: 56px;
   pointer-events: none;
-  z-index: 8;
+  z-index: 7;
   opacity: 0;
   transition: opacity 0.45s ease;
   filter: drop-shadow(0 0 8px rgba(255,184,69,0.7));
 }
 
-/* Sun disk — AR overlay, positioned via JS left/top */
-#sun-disk {
+#cam-hud {
   position: fixed;
-  width: 80px; height: 80px;
-  transform: translate(-50%, -50%);
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(255,241,194,0.95) 0%, rgba(255,184,69,0.6) 45%, transparent 100%);
-  box-shadow: 0 0 40px 20px rgba(255,184,69,0.45), 0 0 80px 40px rgba(255,184,69,0.2);
-  pointer-events: none;
+  top: calc(12px + var(--safe-top));
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 8;
-  animation: sun-ar-pulse 2.4s ease-in-out infinite;
+  padding: 8px 12px;
 }
-@keyframes sun-ar-pulse {
-  0%, 100% { transform: translate(-50%, -50%) scale(1);    opacity: 0.92; }
-  50%       { transform: translate(-50%, -50%) scale(1.10); opacity: 1;    }
-}
-
-/* Arrow HUD — top-left (topbar is hidden in arrow mode so this space is free) */
-#arrow-hud {
+#cam-actions {
   position: fixed;
-  top: calc(max(12px, env(safe-area-inset-top)) + 8px);
-  left: calc(12px + var(--safe-left));
+  bottom: calc(220px + var(--safe-bottom));
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 8;
-  padding: 10px 14px;
   display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  max-width: calc(100vw - 80px); /* leave room for #modes on the right */
+  gap: 10px;
 }
-
-#arrow-sensor-btn, #arrow-cam-btn {
+#cam-sensor-btn {
   height: 36px;
   padding: 0 14px;
   border-radius: 9px;
@@ -479,81 +500,18 @@ input { font-family: inherit; color: inherit; }
   background: var(--gold-soft);
   color: var(--gold);
   border: 1px solid rgba(255,184,69,0.35);
-  white-space: nowrap;
 }
-
-.arrow-stat {
-  font-size: 14px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: var(--gold);
-}
-
-#arrow-hud-stats {
-  display: flex;
-  gap: 10px;
-}
-
-/* Arrow mode active button colour */
-.mode-btn[data-mode="arrow"].active { color: var(--gold); background: var(--gold-soft); }
-
-/* Moon mode button */
-.mode-btn[data-mode="moon"].active { color: #d0d8e8; background: rgba(180,195,225,0.12); }
-
-/* Shadow toggle */
-#shadow-toggle.active { color: #3d5aad; background: rgba(61,90,173,0.18); }
-
-/* Moon phase badge */
-.moon-badge {
-  position: fixed;
-  top: calc(72px + var(--safe-top));
-  right: calc(68px + var(--safe-right));
-  z-index: 4;
-  padding: 6px 10px;
-  font-size: 13px;
-  font-weight: 600;
-  color: #d0d8e8;
-  white-space: nowrap;
-  animation: fadein 200ms ease-out;
-}
-
-/* Capture / calibrate buttons in arrow HUD */
-.arrow-action-btn {
+.cam-action {
   height: 36px;
   padding: 0 14px;
   border-radius: 9px;
   font-size: 13px;
   font-weight: 600;
-  background: rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.10);
   color: var(--text);
   border: 1px solid var(--border-strong);
-  white-space: nowrap;
 }
 
-/* When in arrow mode, hide the map-specific chrome */
-body.mode-arrow #topbar { display: none; }
-body.mode-arrow #info   { display: none; }
-body.mode-arrow #hint   { display: none; }
-
-/* ===== Animations ===== */
-@keyframes fadein {
-  from { opacity: 0; transform: translateY(-4px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-@keyframes fadeup {
-  from { opacity: 0; transform: translate(-50%, 8px); }
-  to { opacity: 1; transform: translate(-50%, 0); }
-}
-
-/* ===== Compact phone tweaks ===== */
-@media (max-width: 380px) {
-  #info { max-width: calc(100vw - 24px - 60px); padding: 10px 12px; }
-  .info-value { font-size: 16px; }
-  .info-row { gap: 10px; }
-}
-
-/* Hide info card when keyboard is up (when search is focused on small screens) */
-@media (max-width: 520px) {
-  body.searching #info { display: none; }
-  body.searching #modes { display: none; }
-}
+/* When in camera view, dock simplifies */
+body.view-camera #scrubber-wrap,
+body.view-camera #time-row { /* keep visible */ }
