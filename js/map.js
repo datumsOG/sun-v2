@@ -24,6 +24,8 @@ export function initMap(container, center) {
 }
 
 function brightenLabels(map) {
+  // Only override label text colour — leave all line/fill/background paint
+  // properties from the upstream style untouched.
   try {
     const layers = map.getStyle().layers || [];
     for (const layer of layers) {

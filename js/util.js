@@ -98,3 +98,73 @@ export function startOfLocalDay(d) {
   x.setHours(0, 0, 0, 0);
   return x;
 }
+
+/**
+ * Project a 3D world point (lng, lat, altitude in METRES) to screen pixels.
+ *
+ * Strategy: work entirely in METRES. Find the camera's lng/lat and altitude,
+ * convert both camera and body to local east/north metres around the body's
+ * ground point, cast a ray from camera through the body to the z=0 plane,
+ * convert the apparent ground point back to lng/lat, and project that with
+ * map.project(). Final pixel comes from MapLibre's own projection on a ground
+ * point, so perspective is correct by definition.
+ */
+const EARTH_R_M = 6371008.8;
+const EARTH_CIRC_M = 2 * Math.PI * EARTH_R_M;
+
+function _cameraPosition(map) {
+  // Preferred: public free-camera API; convert position.z (mercator units) → metres.
+  try {
+    if (typeof map.getFreeCameraOptions === 'function') {
+      const o = map.getFreeCameraOptions();
+      if (o && o.position && typeof o.position.toLngLat === 'function') {
+        const ll = o.position.toLngLat();
+        const circAtLat = EARTH_CIRC_M * Math.cos(ll.lat * Math.PI / 180);
+        const altM = o.position.z * circAtLat;
+        if (Number.isFinite(altM) && altM > 0) {
+          return { lng: ll.lng, lat: ll.lat, altM };
+        }
+      }
+    }
+  } catch (_) {}
+
+  // Fallback: derive camera from transform (cameraToCenterDistance + pitch + bearing).
+  const t = map.transform;
+  const center = map.getCenter();
+  const camDistPx = t && t.cameraToCenterDistance;
+  if (!camDistPx || !center) return null;
+  const pitchRad = map.getPitch() * Math.PI / 180;
+  const mPerPx = 156543.03392 * Math.cos(center.lat * Math.PI / 180) / Math.pow(2, map.getZoom());
+  const altM = camDistPx * Math.cos(pitchRad) * mPerPx;
+  const offsetM = camDistPx * Math.sin(pitchRad) * mPerPx;
+  // Camera ground point sits behind the map center along (bearing + 180).
+  const back = (map.getBearing() + 180) % 360;
+  const [lng, lat] = destination(center.lat, center.lng, back, offsetM / 1000);
+  return { lng, lat, altM };
+}
+
+export function project3D(map, lng, lat, altMeters) {
+  if (!altMeters || Math.abs(altMeters) < 1e-6) return map.project([lng, lat]);
+
+  const cam = _cameraPosition(map);
+  if (!cam) return map.project([lng, lat]);
+
+  // Camera must be above body for the ground-intersection trick to make sense.
+  if (cam.altM <= altMeters + 1e-3) return map.project([lng, lat]);
+
+  // Convert camera offset from body's ground point into local east/north metres.
+  const cosLat = Math.cos(lat * Math.PI / 180);
+  const M_PER_DEG = EARTH_CIRC_M / 360; // ≈ 111195
+  const camDx = (cam.lng - lng) * M_PER_DEG * cosLat;
+  const camDy = (cam.lat - lat) * M_PER_DEG;
+
+  // Ray (cam) → (body at altMeters above body-ground = origin), continued to z=0:
+  // apparent_xy = camDxy * (1 - t) with t = camAltM / (camAltM - altMeters)
+  const tParam = cam.altM / (cam.altM - altMeters);
+  const apX = camDx * (1 - tParam);
+  const apY = camDy * (1 - tParam);
+
+  const apLng = lng + apX / (M_PER_DEG * cosLat);
+  const apLat = lat + apY / M_PER_DEG;
+  return map.project([apLng, apLat]);
+}

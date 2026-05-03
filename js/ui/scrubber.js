@@ -46,8 +46,13 @@ export function initScrubber(els) {
   hh.textContent = formatHHMM(store.get().datetime);
 
   dateBtn.addEventListener('click', () => {
-    if (typeof dateInput.showPicker === 'function') dateInput.showPicker();
-    else dateInput.click();
+    try {
+      if (typeof dateInput.showPicker === 'function') dateInput.showPicker();
+      else dateInput.click();
+    } catch (e) {
+      // showPicker throws if input is hidden / not in user gesture; fallback
+      try { dateInput.focus(); dateInput.click(); } catch {}
+    }
   });
   dateInput.addEventListener('change', () => {
     if (!dateInput.value) return;

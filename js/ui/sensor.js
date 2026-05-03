@@ -5,8 +5,11 @@
 import * as store from '../state.js';
 
 const SMOOTHING = 0.12;         // lower = more stable (was 0.2)
+const PITCH_SMOOTHING = 0.18;
 const SPIKE_THRESHOLD = 45;     // degrees — discard jumps larger than this
+const MAX_PITCH = 75;
 let smoothed = null;
+let smoothedPitch = null;
 let attached = false;
 
 export async function enableCompass() {
@@ -36,7 +39,8 @@ export function disableCompass() {
     attached = false;
   }
   smoothed = null;
-  store.set({ compassEnabled: false, compassHeading: null });
+  smoothedPitch = null;
+  store.set({ compassEnabled: false, compassHeading: null, compassPitch: null });
 }
 
 function onOrient(e) {
@@ -61,5 +65,24 @@ function onOrient(e) {
     if (Math.abs(delta) > SPIKE_THRESHOLD) return; // discard spike
     smoothed = (smoothed + delta * SMOOTHING + 360) % 360;
   }
-  store.set({ compassHeading: smoothed });
+
+  // Tilt: device beta is rotation around X (front/back). beta=0 → screen flat
+  // facing up (top-down map). beta=90 → portrait, looking at horizon (max pitch).
+  // Compensate for screen orientation so landscape uses gamma instead.
+  let pitch = null;
+  const beta = (typeof e.beta === 'number') ? e.beta : null;
+  const gamma = (typeof e.gamma === 'number') ? e.gamma : null;
+  if (so === 0 || so === 180) {
+    if (beta != null) pitch = beta;
+  } else {
+    if (gamma != null) pitch = Math.abs(gamma);
+  }
+  if (pitch != null) {
+    pitch = Math.max(0, Math.min(MAX_PITCH, pitch));
+    if (smoothedPitch == null) smoothedPitch = pitch;
+    else smoothedPitch = smoothedPitch + (pitch - smoothedPitch) * PITCH_SMOOTHING;
+    store.set({ compassHeading: smoothed, compassPitch: smoothedPitch });
+  } else {
+    store.set({ compassHeading: smoothed });
+  }
 }

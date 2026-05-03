@@ -19,12 +19,17 @@ const allListeners = new Set();
 const state = {
   observer: { lat: 43.6532, lon: -79.3832 },
   datetime: new Date(),
+  // Per-mode datetime memory: switching sun↔moon restores the last datetime
+  // you were on in that mode rather than carrying the cross-mode time over.
+  sunDatetime: new Date(),
+  moonDatetime: null,
   mode: 'sun',
   view: 'map',
   shadowEnabled: false,
   reflectionEnabled: false,
   compassEnabled: false,
   compassHeading: null,
+  compassPitch: null,
   target: null,
 };
 

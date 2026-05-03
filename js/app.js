@@ -3,7 +3,7 @@
 import * as store from './state.js';
 import { initMap, whenStyleReady } from './map.js';
 import { addObserverLayer, setObserver } from './layers/observer.js';
-import { addSunPathLayer, updateSunPathDay, updateSunNow, setSunPathVisible, setArcRadiusKm } from './layers/sun-path.js';
+import { addSunPathLayer, updateSunPathDay, updateSunNow, setSunPathVisible, setArcRadiusKm, getArcSamples, getArcRadiusKm } from './layers/sun-path.js';
 import { addReflectionLayer, updateReflectionDay, updateReflectionNow, updateReflectionWall, setReflectionVisible } from './layers/reflection.js';
 import { addTargetLayer, setTarget } from './layers/target.js';
 import { addShadowLayer, updateShadow, setShadowVisible, setShadowHeight } from './layers/shadow.js';
@@ -52,10 +52,6 @@ const dom = {
   toast: $('toast'),
   tiltSlider: $('tilt-slider'),
   radiusSlider: $('radius-slider'),
-  alignmentCard: $('alignment-card'),
-  alignmentWhen: $('alignment-when'),
-  alignmentJump: $('alignment-jump'),
-  alignmentClear: $('alignment-clear'),
 };
 
 let map;
@@ -63,9 +59,12 @@ let lastDayKey = null;
 let lastObserverKey = null;
 let reflectionLine = null;
 
-// Map slider value 0..1000 to height 1..1000 m on a log curve (default 333 → ~10 m).
+// Map slider value 0..1000 to height 0..1000 m on a log curve (default 333 → ~10 m).
+// 0 → 0 m exactly, otherwise log-curved from 1 m up to 1000 m.
 function sliderToHeight(v) {
-  const t = Math.max(0, Math.min(1, +v / 1000));
+  const n = +v;
+  if (n <= 0) return 0;
+  const t = Math.min(1, n / 1000);
   return Math.max(1, Math.round(Math.pow(1000, t)));
 }
 // Map slider value 0..1000 to radius 0.02..50 km on a log curve.
@@ -109,12 +108,7 @@ async function main() {
     store.set({ observer: { lat: e.lngLat.lat, lon: e.lngLat.lng } });
   });
 
-  attachLongPress(map, (lngLat) => {
-    if (store.get().reflectionEnabled) return;
-    suppressClick = true;
-    store.set({ target: { lat: lngLat.lat, lon: lngLat.lng } });
-    showToast('Target set — checking next alignment');
-  });
+  // Long-press alignment finder removed — the gold card was confusing.
 
   initReflectionDraw(map);
 
@@ -124,25 +118,36 @@ async function main() {
   });
   initSearch({ input: dom.search, results: dom.searchResults }, map);
 
-  // Body toggle: sun ↔ moon. Icon shows the mode you would switch TO.
+  // Body toggle: sun ↔ moon. Each mode keeps its own datetime memory.
   dom.bodyToggle.addEventListener('click', () => {
     const s = store.get();
     const next = s.mode === 'sun' ? 'moon' : 'sun';
-    const update = { mode: next };
+    // Stash the current datetime under the mode you're leaving
+    const update = {
+      mode: next,
+      [s.mode === 'sun' ? 'sunDatetime' : 'moonDatetime']: s.datetime,
+    };
     if (next === 'moon') {
-      // Jump scrubber to start of the relevant moon arc
-      const now = new Date();
-      const today = getMoonTimes(now, s.observer.lat, s.observer.lon);
-      let anchor;
-      if (today.rise && today.set && today.rise < today.set && now >= today.rise && now <= today.set) {
-        anchor = today.rise;          // moon currently up — scrub from this rise
-      } else if (today.rise && now < today.rise) {
-        anchor = new Date(today.rise.getTime() - 5 * 60 * 1000); // a little before next rise
+      // Restore last moon time, or compute a sensible anchor at the active arc
+      if (s.moonDatetime) {
+        update.datetime = s.moonDatetime;
       } else {
-        const tomorrow = getMoonTimes(new Date(now.getTime() + 24*3600*1000), s.observer.lat, s.observer.lon);
-        anchor = tomorrow.rise ? new Date(tomorrow.rise.getTime() - 5*60*1000) : now;
+        const now = new Date();
+        const today = getMoonTimes(now, s.observer.lat, s.observer.lon);
+        let anchor;
+        if (today.rise && today.set && today.rise < today.set && now >= today.rise && now <= today.set) {
+          anchor = today.rise;
+        } else if (today.rise && now < today.rise) {
+          anchor = new Date(today.rise.getTime() - 5 * 60 * 1000);
+        } else {
+          const tomorrow = getMoonTimes(new Date(now.getTime() + 24*3600*1000), s.observer.lat, s.observer.lon);
+          anchor = tomorrow.rise ? new Date(tomorrow.rise.getTime() - 5*60*1000) : now;
+        }
+        update.datetime = anchor;
       }
-      update.datetime = anchor;
+    } else {
+      // Restore last sun time, or fall back to now
+      update.datetime = s.sunDatetime || new Date();
     }
     store.set(update);
   });
@@ -160,13 +165,22 @@ async function main() {
       disableCompass();
       dom.compassToggle.classList.remove('active');
       dom.compassToggle.setAttribute('aria-pressed', 'false');
+      // Re-enable user gesture handlers
+      try { map.dragRotate.enable(); } catch {}
+      try { map.touchPitch && map.touchPitch.enable(); } catch {}
+      try { map.touchZoomRotate.enableRotation(); } catch {}
       map.easeTo({ bearing: 0, duration: 400 });
     } else {
       const ok = await enableCompass();
       if (ok) {
         dom.compassToggle.classList.add('active');
         dom.compassToggle.setAttribute('aria-pressed', 'true');
-        showToast('Compass on — rotate to align');
+        // Sensor drives bearing+pitch; disable manual rotation/pitch gestures so
+        // two-finger pinch is interpreted purely as zoom (not rotate-or-pitch).
+        try { map.dragRotate.disable(); } catch {}
+        try { map.touchPitch && map.touchPitch.disable(); } catch {}
+        try { map.touchZoomRotate.disableRotation(); } catch {}
+        showToast('Compass on — tilt phone to pitch, pinch to zoom');
       } else {
         showToast('Compass denied');
       }
@@ -192,7 +206,7 @@ async function main() {
   // Vertical sliders (right edge)
   if (dom.tiltSlider) {
     dom.tiltSlider.addEventListener('input', () => {
-      map.easeTo({ pitch: +dom.tiltSlider.value, duration: 80 });
+      map.setPitch(+dom.tiltSlider.value);   // instant — no stutter
     });
   }
   if (dom.radiusSlider) {
@@ -233,16 +247,24 @@ async function main() {
     } catch {}
   });
 
-  dom.alignmentJump.addEventListener('click', () => {
-    if (alignmentResult && alignmentResult.eventTime) {
-      store.set({ datetime: new Date(alignmentResult.eventTime) });
-    }
-  });
-  dom.alignmentClear.addEventListener('click', () => store.set({ target: null }));
+  // Invert map colours
+  const invertBtn = document.getElementById('invert-btn');
+  if (invertBtn) {
+    invertBtn.addEventListener('click', () => {
+      document.body.classList.toggle('invert');
+    });
+  }
 
   store.subscribe('compassHeading', (heading) => {
     if (heading == null) return;
     map.setBearing(heading);
+  });
+
+  store.subscribe('compassPitch', (pitch) => {
+    if (pitch == null) return;
+    const clamped = Math.max(0, Math.min(map.getMaxPitch ? map.getMaxPitch() : 75, pitch));
+    map.setPitch(clamped);
+    if (dom.tiltSlider) dom.tiltSlider.value = String(Math.round(clamped));
   });
 
   store.subscribeAll(throttleRaf((s, changed) => {
@@ -257,14 +279,8 @@ async function main() {
     showToast('Init error: ' + e.message);
   }
 
-  // Brief hint on first load
-  if (dom.hint) {
-    dom.hint.hidden = false;
-    setTimeout(() => { if (dom.hint) dom.hint.hidden = true; }, 4500);
-  }
 }
 
-let alignmentResult = null;
 
 function redraw(s, changed) {
   const observerChanged = changed.includes('observer');
@@ -315,7 +331,6 @@ function redraw(s, changed) {
 
   if (targetChanged || observerChanged) {
     setTarget(map, s.observer, s.target);
-    refreshAlignment(s);
   }
 }
 
@@ -356,8 +371,11 @@ function syncChrome(s) {
     return;
   }
 
-  // Shadow elevation panel visibility
-  if (dom.shadowElevPanel) dom.shadowElevPanel.hidden = !s.shadowEnabled || inCamera;
+  // Shadow elevation panel: always present, dimmed when shadow mode is off
+  if (dom.shadowElevPanel) {
+    dom.shadowElevPanel.hidden = inCamera;
+    dom.shadowElevPanel.classList.toggle('disabled', !s.shadowEnabled);
+  }
 
   if (s.reflectionEnabled) {
     reflectionLine = null;
@@ -370,25 +388,6 @@ function syncChrome(s) {
   }
 }
 
-function refreshAlignment(s) {
-  if (!s.target) {
-    dom.alignmentCard.hidden = true;
-    alignmentResult = null;
-    return;
-  }
-  const targetAz = bearing(s.observer.lat, s.observer.lon, s.target.lat, s.target.lon);
-  const result = findNextAlignment(s.observer, targetAz, 1.5, new Date(), 'either');
-  alignmentResult = result;
-  if (!result) {
-    dom.alignmentCard.hidden = false;
-    dom.alignmentWhen.textContent = 'No alignment within a year';
-    return;
-  }
-  const ev = result.eventTime;
-  const kind = result.kind === 'sunrise' ? '↑' : '↓';
-  dom.alignmentWhen.textContent = `${kind} ${formatDate(ev)} ${formatTime(ev)} · az ${result.azimuth.toFixed(1)}°`;
-  dom.alignmentCard.hidden = false;
-}
 
 function updateRiseSet(s, t) {
   const fmt = (d, prefix) => d ? `${prefix} ${formatTime(d)}` : `${prefix} —`;

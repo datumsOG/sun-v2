@@ -5,7 +5,7 @@
 // with zoom — the arc keeps its shape when you pinch in/out).
 
 import { getDayBoundaries, getPosition, getMoonPos, getMoonTimes } from '../solar.js';
-import { destination } from '../util.js';
+import { destination, project3D } from '../util.js';
 
 const RAY_SRC = 'sun-ray-src';
 const RAY_LINE = 'sun-ray-line';
@@ -15,6 +15,7 @@ const SS_SRC = 'sunset-vec-src';
 const SS_LINE = 'sunset-vec-line';
 
 let arcRadiusKm = 1.5;          // adjustable via vertical slider
+let anchorLiftMetres = 0;       // baseline lift added to every sample (caster height when shadow on)
 const SAMPLES = 60;
 let mapRef = null;
 let arcSamples = [];            // [{ lon, lat, altDeg }]
@@ -28,6 +29,19 @@ export function setArcRadiusKm(km) {
   if (mapRef) refreshArcGeometry();
 }
 export function getArcRadiusKm() { return arcRadiusKm; }
+
+/**
+ * Re-anchor the arc to a different vertical baseline (in metres).
+ * When non-zero (e.g. caster height in shadow mode), the entire arc lifts by
+ * that amount in screen pixels — putting the body on a sphere centred on
+ * the caster top instead of the observer's feet, so a body→caster→shadow ray
+ * is genuinely collinear.
+ */
+export function setAnchorLiftMetres(m) {
+  anchorLiftMetres = Math.max(0, +m || 0);
+  if (mapRef) updateAllOffsets();
+}
+export function getAnchorLiftMetres() { return anchorLiftMetres; }
 
 export function addSunPathLayer(map) {
   mapRef = map;
@@ -71,25 +85,30 @@ function clearArcMarkers() {
   arcMarkers = [];
 }
 
-// Convert real-world metres at a given latitude to screen pixels at the map's current zoom.
-function metresToPixels(metres, lat) {
-  if (!mapRef) return 0;
-  const mPerPx = 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, mapRef.getZoom());
-  return metres / mPerPx;
+// True spherical projection: place the body on a sphere of radius arcRadius
+// around the anchor (observer ground, or caster top in shadow mode).
+// Horizontal distance = R*cos(alt), vertical lift = R*sin(alt).
+function liftMetresAtAltitude(altDeg) {
+  if (altDeg <= 0) return anchorLiftMetres;
+  return arcRadiusKm * 1000 * Math.sin(altDeg * Math.PI / 180) + anchorLiftMetres;
+}
+function horizontalKmAtAltitude(altDeg) {
+  return arcRadiusKm * Math.max(0, Math.cos(altDeg * Math.PI / 180));
 }
 
-// Convert altitude angle (deg) at distance (km from observer) to a real-world vertical lift in metres.
-// We pin the apparent height of the noon point to a fraction of the arc radius so the shape stays sane.
-function altitudeToMetres(altDeg) {
-  if (altDeg <= 0) return 0;
-  // Arc of radius R km — at zenith we lift by 0.5*R km (1/2 the arc radius) for a balanced dome.
-  const liftKm = arcRadiusKm * 0.5 * Math.sin(altDeg * Math.PI / 180);
-  return liftKm * 1000;
-}
-
+/**
+ * Marker offset = (true-3D screen projection of the elevated body) minus
+ * (ground projection of the body's lng/lat). Using MapLibre's actual
+ * projection matrix means the offset is correct under any pitch/bearing/zoom,
+ * and (critically) collinear 3D points stay collinear on screen — so a ray
+ * from the body through the caster top hits the ground shadow point exactly.
+ */
 function offsetForSample(s) {
-  const px = metresToPixels(altitudeToMetres(s.altDeg), s.lat);
-  return [0, -px];
+  if (!mapRef) return [0, 0];
+  const altM = liftMetresAtAltitude(s.altDeg);
+  const ground = mapRef.project([s.lon, s.lat]);
+  const elevated = project3D(mapRef, s.lon, s.lat, altM);
+  return [elevated.x - ground.x, elevated.y - ground.y];
 }
 
 function updateAllOffsets() {
@@ -146,8 +165,8 @@ export function updateSunPathDay(map, observer, datetime, moonMode = false) {
       const d = new Date(ts);
       const p = getPos(d, lat, lon);
       if (p.altitudeDeg < 0) continue;
-      const [glon, glat] = destination(lat, lon, p.azimuthDeg, arcRadiusKm);
-      const sample = { lon: glon, lat: glat, altDeg: p.altitudeDeg };
+      const [glon, glat] = destination(lat, lon, p.azimuthDeg, horizontalKmAtAltitude(p.altitudeDeg));
+      const sample = { lon: glon, lat: glat, altDeg: p.altitudeDeg, azDeg: p.azimuthDeg };
       const dot = document.createElement('div');
       dot.className = 'arc-dot';
       const m = new maplibregl.Marker({ element: dot, offset: offsetForSample(sample) })
@@ -181,10 +200,14 @@ export function updateSunNow(map, observer, datetime, posOverride = null) {
     liveSample = null;
     return p;
   }
-  const [glon, glat] = destination(lat, lon, p.azimuthDeg, arcRadiusKm);
-  setLine(map, RAY_SRC, [[lon, lat], [glon, glat]]);
+  const horizKm = horizontalKmAtAltitude(p.altitudeDeg);
+  const [glon, glat] = destination(lat, lon, p.azimuthDeg, horizKm);
+  // Live ground ray uses the same fixed length as the sunrise/sunset rays so
+  // it doesn't visually shrink near solar noon.
+  const [rayEndLon, rayEndLat] = destination(lat, lon, p.azimuthDeg, arcRadiusKm * 1.4);
+  setLine(map, RAY_SRC, [[lon, lat], [rayEndLon, rayEndLat]]);
 
-  liveSample = { lon: glon, lat: glat, altDeg: p.altitudeDeg };
+  liveSample = { lon: glon, lat: glat, altDeg: p.altitudeDeg, azDeg: p.azimuthDeg };
   if (!liveMarker) {
     const dot = document.createElement('div');
     dot.className = 'arc-dot head';
@@ -202,6 +225,11 @@ export function updateSunNow(map, observer, datetime, posOverride = null) {
 export function getLiveBodyAnchor() {
   if (!liveSample) return null;
   return { ...liveSample, offsetPx: offsetForSample(liveSample) };
+}
+
+/** Snapshot of the arc samples (for AR overlay rendering). */
+export function getArcSamples() {
+  return arcSamples.slice();
 }
 
 function setLine(map, srcId, coords) {

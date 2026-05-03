@@ -14,7 +14,7 @@
 <link rel="preconnect" href="https://tiles.openfreemap.org">
 <link rel="preconnect" href="https://photon.komoot.io">
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-<link rel="stylesheet" href="css/style.css?v=17">
+<link rel="stylesheet" href="css/style.css?v=29">
 </head>
 <body>
 <div id="map" aria-label="Map"></div>
@@ -38,7 +38,7 @@
     <button id="date-btn" class="ghostbtn" aria-label="Pick date">
       <span id="date-label">Today</span>
     </button>
-    <input id="date-input" type="date" hidden>
+    <input id="date-input" type="date" aria-hidden="true" tabindex="-1">
     <div id="sun-alt" aria-label="Body altitude">—</div>
     <div id="rise-set">
       <span id="rise-label">↑ —</span>
@@ -80,6 +80,10 @@
     <button id="share-btn" class="ctlbtn" aria-label="Share link">
       <svg width="22" height="22" viewBox="0 0 24 24"><path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M16 6l-4-4-4 4M12 2v13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
+
+    <button id="invert-btn" class="ctlbtn" aria-label="Invert map">
+      <svg width="22" height="22" viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+    </button>
   </div>
 
   <div id="shadow-elev-panel" hidden>
@@ -88,14 +92,7 @@
     <span id="shadow-elev-val">10 m</span>
   </div>
 
-  <div id="alignment-card" hidden>
-    <span id="alignment-when">—</span>
-    <button id="alignment-jump" class="ghostbtn" title="Move time slider to this moment">Go to time</button>
-    <button id="alignment-clear" class="closebtn" aria-label="Clear">×</button>
-  </div>
 </section>
-
-<div id="hint" class="glass" hidden>Long-press a spot to find when sun rises/sets behind it</div>
 
 <!-- Right-edge vertical sliders: arc radius (lower 2/3) and map tilt (upper 1/3) -->
 <input id="tilt-slider" class="vslider tilt" type="range" min="0" max="75" step="1" value="55" aria-label="Map tilt">
@@ -124,14 +121,18 @@
   </div>
 
   <div id="cam-actions">
+    <button id="cam-ar-btn" class="cam-action">AR off</button>
     <button id="cam-calibrate" class="cam-action" hidden>Align</button>
     <button id="cam-capture" class="cam-action" hidden>Capture</button>
   </div>
+
+  <!-- AR overlay container — populated by camera-view at runtime when AR is on -->
+  <div id="ar-overlay" hidden></div>
 </div>
 
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script type="importmap">{ "imports": { "three": "https://unpkg.com/three@0.169.0/build/three.module.js" } }</script>
-<script type="module" src="js/app.js?v=17"></script>
+<script type="module" src="js/app.js?v=29"></script>
 <script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {

@@ -9,6 +9,8 @@
 // without freezing the body when you actually move.
 
 import { getPosition, getMoonPos, getMoonIllumination } from '../solar.js';
+import { getArcSamples } from '../layers/sun-path.js';
+import { getShadowHeight } from '../layers/shadow.js';
 
 // ── Orientation matrix math ──
 const id3 = () => [[1,0,0],[0,1,0],[0,0,1]];
@@ -48,7 +50,11 @@ const HEADING_SPIKE = 30;
 const HALF_HFOV_TAN = Math.tan(34 * Math.PI / 180);
 
 let elView, elVideo, elGuide, elDisk, elDiskShadow;
-let elSensorBtn, elCalibrate, elCapture;
+let elSensorBtn, elCalibrate, elCapture, elArBtn, elArOverlay;
+let arEnabled = false;
+let arDots = [];
+let elArCaster = null, elArObs = null, elArShadowEnd = null, arSvg = null, arShadowLine = null;
+const EYE_HEIGHT_M = 1.6;
 
 export function initCameraView() {
   elView      = document.getElementById('camera-view');
@@ -56,9 +62,49 @@ export function initCameraView() {
   elGuide     = document.getElementById('guide-arrow');
   elDisk      = document.getElementById('body-disk');
   elDiskShadow = document.getElementById('body-disk-shadow');
-  elSensorBtn = document.getElementById('cam-sensor-btn');
+  elSensorBtn = null; // removed from UI; permission requested automatically
   elCalibrate = document.getElementById('cam-calibrate');
   elCapture   = document.getElementById('cam-capture');
+  elArBtn     = document.getElementById('cam-ar-btn');
+  elArOverlay = document.getElementById('ar-overlay');
+
+  if (elArBtn) {
+    elArBtn.addEventListener('click', () => {
+      enableSensors();
+      arEnabled = !arEnabled;
+      elArBtn.textContent = 'AR ' + (arEnabled ? 'on' : 'off');
+      if (elArOverlay) elArOverlay.hidden = !arEnabled;
+      if (!arEnabled) clearArDots();
+    });
+  }
+
+  // Build AR overlay extras: caster, observer dot, shadow-end dot, line SVG
+  if (elArOverlay) {
+    elArCaster = document.createElement('div');
+    elArCaster.className = 'ar-caster';
+    elArCaster.style.display = 'none';
+    elArOverlay.appendChild(elArCaster);
+
+    elArObs = document.createElement('div');
+    elArObs.style.cssText = 'position:absolute;width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 0 4px rgba(0,0,0,0.6);transform:translate(-50%,-50%);pointer-events:none;display:none;';
+    elArOverlay.appendChild(elArObs);
+
+    elArShadowEnd = document.createElement('div');
+    elArShadowEnd.className = 'shadow-end';
+    elArShadowEnd.style.cssText += 'position:absolute;transform:translate(-50%,-50%);display:none;';
+    elArOverlay.appendChild(elArShadowEnd);
+
+    arSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    arSvg.setAttribute('style', 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;');
+    arShadowLine = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    arShadowLine.setAttribute('fill', 'none');
+    arShadowLine.setAttribute('stroke-width', '3');
+    arShadowLine.setAttribute('stroke-linecap', 'round');
+    arShadowLine.setAttribute('stroke-linejoin', 'round');
+    arShadowLine.setAttribute('opacity', '0.95');
+    arSvg.appendChild(arShadowLine);
+    elArOverlay.appendChild(arSvg);
+  }
 
   elSensorBtn.addEventListener('click', enableSensors);
   elCalibrate.addEventListener('click', calibrate);
@@ -69,6 +115,9 @@ export function showCameraView() {
   visible = true;
   elView.hidden = false;
   startCamera();
+  // Auto-request sensors on entering camera view (we're already inside a user
+  // gesture from the view toggle, so iOS will accept the permission prompt).
+  enableSensors();
   if (!animId) animId = requestAnimationFrame(tick);
 }
 
@@ -117,7 +166,7 @@ async function enableSensors() {
       window.addEventListener('deviceorientation', onOrient, true);
       sensorsAttached = true;
     }
-    elSensorBtn.hidden = true;
+    if (elSensorBtn) elSensorBtn.hidden = true;
     elCalibrate.hidden = false;
     elCapture.hidden = false;
   } catch {
@@ -209,6 +258,132 @@ function tick() {
     elDisk.hidden = true;
     elGuide.style.opacity = '1';
     elGuide.style.transform = `translate(-50%, -50%) rotate(${guideAngle * 180 / Math.PI}deg)`;
+  }
+
+  if (arEnabled) renderAR(W, H, halfVfovTan);
+}
+
+// ─── Experimental AR overlay: render the sun/moon arc as dots in the sky ───
+function clearArDots() {
+  for (const d of arDots) d.remove();
+  arDots = [];
+}
+// Project a unit-direction vector (infinite distance) into screen space.
+function projectUnit(world, W, H, halfVfovTan) {
+  const v = mv3(T3(R), world);
+  const depth = -v[2];
+  if (depth <= 0.01) return null;
+  const ndcX = (v[0] / depth) / HALF_HFOV_TAN;
+  const ndcY = (v[1] / depth) / halfVfovTan;
+  return { x: (ndcX + 1) / 2 * W, y: (1 - ndcY) / 2 * H };
+}
+
+// Project a finite-distance point in metres (ENU). Returns {x, y, dist}.
+function projectPoint(worldM, W, H, halfVfovTan) {
+  const v = mv3(T3(R), worldM);
+  const depth = -v[2];
+  if (depth <= 0.01) return null;
+  const ndcX = (v[0] / depth) / HALF_HFOV_TAN;
+  const ndcY = (v[1] / depth) / halfVfovTan;
+  const dist = Math.hypot(v[0], v[1], v[2]);
+  return { x: (ndcX + 1) / 2 * W, y: (1 - ndcY) / 2 * H, dist };
+}
+
+function renderAR(W, H, halfVfovTan) {
+  if (!elArOverlay) return;
+  const colour = moonMode ? '#d0d8e8' : '#ffb845';
+
+  // ---- Arc dots (infinite distance, unit vectors) ----
+  const samples = getArcSamples();
+  while (arDots.length < samples.length) {
+    const d = document.createElement('div');
+    d.className = 'ar-dot';
+    elArOverlay.appendChild(d);
+    arDots.push(d);
+  }
+  while (arDots.length > samples.length) arDots.pop().remove();
+
+  for (let i = 0; i < samples.length; i++) {
+    const s = samples[i];
+    const az = ((s.azDeg + calibrationOffset) % 360) * Math.PI / 180;
+    const el = s.altDeg * Math.PI / 180;
+    const world = [
+      Math.cos(el) * Math.sin(az),
+      Math.cos(el) * Math.cos(az),
+      Math.sin(el),
+    ];
+    const p = projectUnit(world, W, H, halfVfovTan);
+    const dot = arDots[i];
+    if (p) { dot.style.left = p.x + 'px'; dot.style.top = p.y + 'px'; dot.style.display = ''; }
+    else dot.style.display = 'none';
+  }
+
+  // ---- Body position (live sun/moon) — used as the sky end of the shadow line ----
+  const body = moonMode
+    ? getMoonPos(datetime, observer.lat, observer.lon)
+    : getPosition(datetime, observer.lat, observer.lon);
+  const bAz = ((body.azimuthDeg + calibrationOffset) % 360) * Math.PI / 180;
+  const bEl = body.altitudeDeg * Math.PI / 180;
+  const bodyDir = [Math.cos(bEl)*Math.sin(bAz), Math.cos(bEl)*Math.cos(bAz), Math.sin(bEl)];
+  const bodyScreen = projectUnit(bodyDir, W, H, halfVfovTan);
+
+  // ---- Caster sphere (2 m diameter, at observer position, altitude H) ----
+  const casterH = getShadowHeight();
+  // World position relative to user's eyes (assumed at observer, eye height 1.6 m)
+  const casterWorld = [0, 0, casterH - EYE_HEIGHT_M];
+  const casterP = projectPoint(casterWorld, W, H, halfVfovTan);
+  if (casterP) {
+    // Pixel size: 2 m sphere → diameter ≈ (2/dist) * (W/2) / HALF_HFOV_TAN
+    const px = Math.max(8, (2 / Math.max(0.5, casterP.dist)) * (W / 2) / HALF_HFOV_TAN);
+    elArCaster.style.display = '';
+    elArCaster.style.left = casterP.x + 'px';
+    elArCaster.style.top  = casterP.y + 'px';
+    elArCaster.style.width = px + 'px';
+    elArCaster.style.height = px + 'px';
+  } else {
+    elArCaster.style.display = 'none';
+  }
+
+  // ---- White observer ground dot (at observer's feet) ----
+  const obsWorld = [0, 0, -EYE_HEIGHT_M];
+  const obsP = projectPoint(obsWorld, W, H, halfVfovTan);
+  if (obsP) {
+    elArObs.style.display = '';
+    elArObs.style.left = obsP.x + 'px';
+    elArObs.style.top  = obsP.y + 'px';
+  } else {
+    elArObs.style.display = 'none';
+  }
+
+  // ---- Shadow ground end (in opposite-azimuth direction, at distance casterH/tan(el)) ----
+  let endP = null;
+  if (body.altitudeDeg > 0.5) {
+    const tanEl = Math.tan(bEl);
+    const dist = Math.min(casterH / tanEl, 4000); // metres, cap 4 km
+    const shadowAz = (body.azimuthDeg + calibrationOffset + 180) % 360;
+    const shAzRad = shadowAz * Math.PI / 180;
+    const endWorld = [dist * Math.sin(shAzRad), dist * Math.cos(shAzRad), -EYE_HEIGHT_M];
+    endP = projectPoint(endWorld, W, H, halfVfovTan);
+    if (endP) {
+      elArShadowEnd.style.display = '';
+      elArShadowEnd.style.left = endP.x + 'px';
+      elArShadowEnd.style.top  = endP.y + 'px';
+      elArShadowEnd.style.background = colour;
+    } else {
+      elArShadowEnd.style.display = 'none';
+    }
+  } else {
+    elArShadowEnd.style.display = 'none';
+  }
+
+  // ---- Shadow line: body → caster → shadow end ----
+  if (bodyScreen && casterP && endP) {
+    const pts = `${bodyScreen.x},${bodyScreen.y} ${casterP.x},${casterP.y} ${endP.x},${endP.y}`;
+    arShadowLine.setAttribute('points', pts);
+    arShadowLine.setAttribute('stroke', colour);
+    arShadowLine.setAttribute('opacity', '0.95');
+  } else {
+    arShadowLine.setAttribute('opacity', '0');
   }
 }
 

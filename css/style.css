@@ -57,10 +57,22 @@ button { font-family: inherit; color: inherit; background: none; border: 0; curs
 input { font-family: inherit; color: inherit; }
 
 #map { position: fixed; inset: 0; background: var(--bg); }
+/* Hide MapLibre's stock chrome (controls, attribution) but NOT markers — markers
+   live inside .maplibregl-canvas-container in MapLibre 4 and were being nuked
+   by an over-broad `> *:not(canvas)` selector. */
 .maplibregl-ctrl-attrib,
 .maplibregl-ctrl-bottom-left,
-.maplibregl-ctrl-bottom-right { display: none !important; }
+.maplibregl-ctrl-bottom-right,
+.maplibregl-ctrl-top-left,
+.maplibregl-ctrl-top-right,
+.maplibregl-control-container { display: none !important; }
 .maplibregl-canvas { outline: none !important; }
+/* Default theme: dark map, white labels (no canvas filter — actual fills brightened via setPaintProperty). */
+body.invert .maplibregl-canvas { filter: invert(1) hue-rotate(180deg); }
+body.invert .arc-dot,
+body.invert .caster-sphere,
+body.invert .shadow-end,
+body.invert #shadow-svg { filter: invert(1) hue-rotate(180deg); }
 
 .glass {
   background: var(--surface);
@@ -184,6 +196,15 @@ body.mode-moon #scrubber {
   font-weight: 600;
   letter-spacing: -0.01em;
 }
+/* Date input is offscreen but not display:none so showPicker() works */
+#date-input {
+  position: absolute;
+  left: 0; top: 0;
+  width: 1px; height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  border: 0; padding: 0; margin: 0;
+}
 #date-btn {
   font-size: 14px;
   color: var(--text);
@@ -283,7 +304,7 @@ body.mode-moon #body-toggle { color: var(--moonblue); }
   width: 22px; height: 22px;
 }
 
-/* Shadow elevation panel */
+/* Shadow elevation panel — always visible; dimmed when shadow mode is off */
 #shadow-elev-panel {
   margin-top: 8px;
   padding: 6px 10px;
@@ -293,50 +314,61 @@ body.mode-moon #body-toggle { color: var(--moonblue); }
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 12px;
-  color: var(--shadow-clr);
+  font-size: 13px;
+  color: #ffffff;
+  transition: opacity 200ms ease;
 }
-#shadow-elev-panel label { font-weight: 600; white-space: nowrap; }
+#shadow-elev-panel.disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+#shadow-elev-panel label { font-weight: 600; white-space: nowrap; color: #ffffff; }
 #shadow-elev { flex: 1; height: 4px; }
-#shadow-elev-val { font-variant-numeric: tabular-nums; min-width: 44px; text-align: right; }
+#shadow-elev-val { font-variant-numeric: tabular-nums; min-width: 56px; text-align: right; color: #ffffff; }
 
 /* ===== Vertical sliders (right edge) =====
-   We position them by computing top/bottom against the dock.
-   Tilt slider: top 1/3 of available space.
-   Radius slider: lower 2/3.
-   "Available" = from top of viewport to top of dock. */
+   Custom thin off-white tracks with a small flat thumb.
+   Implemented as a vertical-rotated input range. */
 .vslider {
   position: fixed;
-  right: 6px;
+  right: 12px;
   -webkit-appearance: slider-vertical;
   appearance: slider-vertical;
   writing-mode: bt-lr;
-  width: 26px;
+  width: 22px;
   z-index: 4;
   background: transparent;
-  /* Hide native track on platforms that don't honor slider-vertical */
+  touch-action: none;
 }
 .vslider::-webkit-slider-runnable-track {
-  width: 4px;
-  background: rgba(255,255,255,0.18);
-  border-radius: 2px;
+  width: 1.5px;
+  background: rgba(255,255,255,0.45);
+  border-radius: 1px;
+}
+.vslider::-moz-range-track {
+  width: 1.5px;
+  background: rgba(255,255,255,0.45);
+  border-radius: 1px;
 }
 .vslider::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 18px; height: 18px;
-  border-radius: 50%;
-  background: rgba(255,255,255,0.95);
-  border: 2px solid #000;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+  width: 28px; height: 12px;
+  border-radius: 4px;
+  background: #ffffff;
+  border: none;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+  margin-left: -13px;
 }
 .vslider::-moz-range-thumb {
-  width: 18px; height: 18px;
-  border-radius: 50%;
-  background: rgba(255,255,255,0.95);
-  border: 2px solid #000;
+  width: 28px; height: 12px;
+  border-radius: 4px;
+  background: #ffffff;
+  border: none;
 }
-.vslider.tilt   { top: calc(8px + var(--safe-top)); height: calc(33vh - 16px); }
-.vslider.radius { top: calc(33vh + 8px);            height: calc(67vh - 280px); }
+.vslider.tilt   { top: calc(10px + var(--safe-top)); height: calc(33vh - 30px); }
+/* Bottom slider stops above the dock so its thumb isn't hidden behind it */
+.vslider.radius { top: calc(33vh + 14px);            height: calc(67vh - 320px); }
+body.view-camera .vslider { display: none; }
 
 /* Hint banner */
 #hint {
@@ -427,6 +459,44 @@ body.mode-moon .shadow-end {
 /* Camera mode hides map chrome but keeps the dock visible */
 body.view-camera #map { visibility: hidden; }
 
+/* AR overlay — full-screen, transparent, only used in camera mode */
+#ar-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+  overflow: hidden;
+}
+.ar-dot {
+  position: absolute;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle, #fff1c2 30%, rgba(255,184,69,0.9) 70%, rgba(255,184,69,0) 100%);
+  box-shadow: 0 0 6px rgba(255,184,69,0.7);
+  pointer-events: none;
+}
+body.mode-moon .ar-dot {
+  background: radial-gradient(circle, #f0f3fa 30%, rgba(208,216,232,0.85) 70%, rgba(208,216,232,0) 100%);
+  box-shadow: 0 0 6px rgba(208,216,232,0.5);
+}
+.ar-caster {
+  position: absolute;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle at 35% 35%, #c8e6ff, #4dd2ff 70%, #1d6ea8 100%);
+  box-shadow: 0 0 8px rgba(77,210,255,0.7);
+}
+.ar-line {
+  position: absolute;
+  height: 2px;
+  background: var(--gold);
+  transform-origin: 0 50%;
+  pointer-events: none;
+}
+body.mode-moon .ar-line { background: var(--moonblue); }
+
 /* Sun or moon disk overlay */
 #body-disk {
   position: fixed;
@@ -474,17 +544,11 @@ body.mode-moon #body-disk-shadow { display: block; }
   filter: drop-shadow(0 0 8px rgba(255,184,69,0.7));
 }
 
-#cam-hud {
-  position: fixed;
-  top: calc(12px + var(--safe-top));
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 8;
-  padding: 8px 12px;
-}
+/* No top HUD in camera mode — sensors auto-request when entering camera. */
+#cam-hud { display: none; }
 #cam-actions {
   position: fixed;
-  bottom: calc(220px + var(--safe-bottom));
+  bottom: calc(260px + var(--safe-bottom));
   left: 50%;
   transform: translateX(-50%);
   z-index: 8;
