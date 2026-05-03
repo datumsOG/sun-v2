@@ -193,9 +193,49 @@ All five planned fixes were implemented in a single commit. Summary of what chan
 
 ---
 
+## Part 3b — Follow-up Fixes (2026-05-03)
+
+**Commit:** `1144b0c`
+
+Three additional changes requested after the initial audit/fix round.
+
+### Orange ray line always visible
+
+**Files:** `js/layers/sun-path.js`, `js/app.js`
+
+- Changed `RAY_LINE` paint from `#fff1c2` (cream, dashed) to `#ffb845` (orange, solid, 2.5px width).
+- Changed ray geometry: now draws from the arc dot's ground position `[glon, glat]` back to the observer `[lon, lat]`, so it visually represents the sun/moon ray coming down to the observer's ground position.
+- Added `setRayLineVisible(map, vis)` export. `setSunPathVisible()` no longer controls `RAY_LINE`.
+- In `app.js syncChrome()`: added `setRayLineVisible(map, !inCamera)` independently of `setSunPathVisible`. The orange ray is now always visible in map mode, including while reflection mode is active.
+
+### Reflection mode works in moon mode
+
+**Files:** `js/layers/reflection.js`, `js/app.js`
+
+- `updateReflectionNow` now accepts a `moonMode` parameter and uses `getMoonPos` instead of `getPosition` when in moon mode.
+- Removed `s.mode !== 'sun'` guard from the `reflectionToggle` click handler.
+- Changed `const reflectionAvail = inSun && !inCamera` → `const reflectionAvail = !inCamera` in `syncChrome()`.
+- Both call sites in `app.js` updated to pass `moonMode`.
+
+### Date picker (third attempt — input overlay)
+
+**Files:** `index.html`, `css/style.css`
+
+The `<label for>` approach from the previous fix still didn't open the native picker on iOS. Root cause: iOS Safari PWA mode requires the user's touch to land directly on the `<input type="date">` element itself — label activation and programmatic `.showPicker()` / `.click()` are both unreliable.
+
+Fix: moved `<input id="date-input">` inside `<button id="date-btn">` as an absolutely-positioned transparent overlay covering the full button area. When the user taps the button, their touch lands directly on the input, which opens the native date picker. No JS is involved in opening the picker — only the `change` event handler in `scrubber.js` remains.
+
+CSS: `#date-btn { position: relative; overflow: hidden; }` and `#date-input { position: absolute; inset: 0; opacity: 0; cursor: pointer; font-size: 16px; }`.
+
+### Cache bump
+- Service worker cache bumped `v30` → `v31`.
+- Asset query-string versions bumped `?v=30` → `?v=31`.
+
+---
+
 ## Part 4 — App Description for Future Sessions
 
-> **Purpose of this section:** Provide a fresh Claude Code session with full context on the app — what it does, how it works, every file's role, data sources, and the current state of the codebase as of commit `dd8866f`.
+> **Purpose of this section:** Provide a fresh Claude Code session with full context on the app — what it does, how it works, every file's role, data sources, and the current state of the codebase as of commit `1144b0c`.
 
 ---
 
@@ -294,7 +334,7 @@ GeoJSON circle layer: white dot + ring at observer position. Updated by `setObse
 Most complex layer. Responsibilities:
 - Maintains 60 arc-dot `maplibregl.Marker` elements along the body's day-arc from rise to set. Markers are DOM elements (`.arc-dot`) lifted off the ground via `project3D()` offsets so altitude is perspectively correct.
 - Live body marker (`.arc-dot.head`, the larger bright dot).
-- Three MapLibre line sources: `SR_LINE` (sunrise bearing, orange dashed), `SS_LINE` (sunset bearing, red dashed), `RAY_LINE` (current body bearing, white dashed).
+- Three MapLibre line sources: `SR_LINE` (sunrise bearing, orange dashed), `SS_LINE` (sunset bearing, red dashed), `RAY_LINE` (current body bearing, solid orange — always visible in map mode, controlled by `setRayLineVisible()` independently of the arc).
 - `arcRadiusKm` — adjustable radius; default 1.5 km, controlled by the right-edge slider (0.02–50 km).
 - `anchorLiftMetres` — lifts all arc markers by this much when shadow mode is active (raises the arc to be centred on the caster top, making body→caster→shadow rays collinear).
 - `getArcSamples()` — returns the current arc sample array, used by AR renderer.
@@ -312,10 +352,10 @@ Shadow mode visualisation. When enabled:
 #### `js/layers/reflection.js`
 Reflection mode. When user holds and drags to draw a wall line:
 - Wall line (white dashed).
-- Sun marker at projected position.
-- Incident ray (sun → wall midpoint, orange dashed).
-- Reflected ray (wall midpoint → outward, solid cyan). Formula: `R = (2*wallBearing - sunAzimuth + 180) mod 360`.
-- Only active in sun + map mode.
+- Sun/moon marker at projected position.
+- Incident ray (body → wall midpoint, orange dashed).
+- Reflected ray (wall midpoint → outward, solid cyan). Formula: `R = (2*wallBearing - bodyAzimuth + 180) mod 360`.
+- Active in both sun and moon map mode. `updateReflectionNow(map, observer, datetime, line, moonMode)` uses `getMoonPos` when `moonMode=true`.
 
 #### `js/layers/target.js`
 Optional alignment target: orange pin at `target` position, dashed orange line back to observer. Currently no UI to set the target (removed); target can be set via URL hash `#tg=lat,lon`.
@@ -325,7 +365,7 @@ Time slider + date picker:
 - Sun mode: slider range 0–1439 (minutes of day).
 - Moon mode: slider range 0–N minutes from moonrise to moonset; value = minutes after moonrise.
 - `setScrubberRange()` — called on day/observer/mode change to resize the slider.
-- Date picker: `#date-btn` is a `<label for="date-input">`. Tapping it natively activates `#date-input` (off-screen `<input type="date">`). The `change` event updates `store.datetime` preserving the current time-of-day (only date component changes).
+- Date picker: `#date-btn` is a `<button>` containing a transparent `<input type="date">` overlay (`position:absolute; inset:0; opacity:0`). The user's tap lands directly on the input, which opens the native date picker on all platforms including iOS Safari PWA mode. The `change` event updates `store.datetime` preserving the current time-of-day.
 - Moon phase marker (`#moon-phase-marker`) — small circle below scrubber showing illumination phase via CSS clip-path.
 
 #### `js/ui/search.js`
