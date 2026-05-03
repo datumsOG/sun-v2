@@ -3,7 +3,7 @@
 import * as store from './state.js';
 import { initMap, whenStyleReady } from './map.js';
 import { addObserverLayer, setObserver } from './layers/observer.js';
-import { addSunPathLayer, updateSunPathDay, updateSunNow, setSunPathVisible, setArcRadiusKm, getArcSamples, getArcRadiusKm } from './layers/sun-path.js';
+import { addSunPathLayer, updateSunPathDay, updateSunNow, setSunPathVisible, setRayLineVisible, setArcRadiusKm, getArcSamples, getArcRadiusKm } from './layers/sun-path.js';
 import { addReflectionLayer, updateReflectionDay, updateReflectionNow, updateReflectionWall, setReflectionVisible } from './layers/reflection.js';
 import { addTargetLayer, setTarget } from './layers/target.js';
 import { addShadowLayer, updateShadow, setShadowVisible, setShadowHeight } from './layers/shadow.js';
@@ -228,8 +228,7 @@ async function main() {
 
   dom.reflectionToggle.addEventListener('click', () => {
     const s = store.get();
-    // Reflection only valid in sun + map mode
-    if (s.mode !== 'sun' || s.view !== 'map') return;
+    if (s.view !== 'map') return;
     store.set({ reflectionEnabled: !s.reflectionEnabled });
   });
 
@@ -315,7 +314,7 @@ function redraw(s, changed) {
   // Per-frame body position
   const moonPos = moonMode ? getMoonPos(s.datetime, s.observer.lat, s.observer.lon) : null;
   updateSunNow(map, s.observer, s.datetime, moonPos);
-  updateReflectionNow(map, s.observer, s.datetime, reflectionLine);
+  updateReflectionNow(map, s.observer, s.datetime, reflectionLine, moonMode);
   if (s.shadowEnabled) updateShadow(map, s.observer, s.datetime, moonMode);
   updateNowText(s);
   setMoonPhaseMarker(dom.moonPhaseMarker, moonMode ? getMoonIllumination(s.datetime) : null);
@@ -345,6 +344,7 @@ function syncChrome(s) {
   if (inCamera) showCameraView(); else hideCameraView();
 
   setSunPathVisible(map, !inCamera && !s.reflectionEnabled);
+  setRayLineVisible(map, !inCamera);   // orange ray always shown in map mode
   setReflectionVisible(map, !inCamera && s.reflectionEnabled);
   setShadowVisible(map, !inCamera && s.shadowEnabled);
 
@@ -362,8 +362,8 @@ function syncChrome(s) {
   dom.reflectionToggle.classList.toggle('active', s.reflectionEnabled);
   dom.reflectionToggle.setAttribute('aria-pressed', s.reflectionEnabled ? 'true' : 'false');
 
-  // Reflection only enabled in sun + map mode
-  const reflectionAvail = inSun && !inCamera;
+  // Reflection available in both sun and moon map mode
+  const reflectionAvail = !inCamera;
   dom.reflectionToggle.classList.toggle('disabled', !reflectionAvail);
   if (!reflectionAvail && s.reflectionEnabled) {
     store.set({ reflectionEnabled: false });
@@ -469,7 +469,7 @@ function initReflectionDraw(map) {
       reflectionLine = { start: drawStart, end: drawEnd };
       updateReflectionWall(map, reflectionLine);
       const s = store.get();
-      updateReflectionNow(map, s.observer, s.datetime, reflectionLine);
+      updateReflectionNow(map, s.observer, s.datetime, reflectionLine, s.mode === 'moon');
     }
     drawStart = null;
     drawEnd = null;

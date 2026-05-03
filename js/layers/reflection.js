@@ -4,7 +4,7 @@
 //   • a reflected ray from midpoint outward (2D mirror off the wall)
 // Reflected azimuth formula: R = (2*wallBearing − sunAzimuth + 180) % 360
 
-import { getPosition } from '../solar.js';
+import { getPosition, getMoonPos } from '../solar.js';
 import { destination, bearing } from '../util.js';
 
 const WALL_SRC      = 'reflect-wall-src';
@@ -91,8 +91,8 @@ export function updateReflectionWall(map, line) {
   setPoint(map, MID_SRC, midpoint(line));
 }
 
-/** Update sun marker + incident + reflected rays. line = { start, end } | null */
-export function updateReflectionNow(map, observer, datetime, line) {
+/** Update sun/moon marker + incident + reflected rays. line = { start, end } | null */
+export function updateReflectionNow(map, observer, datetime, line, moonMode = false) {
   if (!line) {
     clear(map, INCIDENT_SRC);
     clear(map, REFLECT_SRC);
@@ -105,7 +105,7 @@ export function updateReflectionNow(map, observer, datetime, line) {
   const midLon = (line.start.lon + line.end.lon) / 2;
   const mid = [midLon, midLat];
 
-  const p = getPosition(datetime, midLat, midLon);
+  const p = moonMode ? getMoonPos(datetime, midLat, midLon) : getPosition(datetime, midLat, midLon);
 
   if (p.altitudeDeg < -1) {
     clear(map, INCIDENT_SRC);

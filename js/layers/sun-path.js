@@ -62,7 +62,7 @@ export function addSunPathLayer(map) {
   });
   map.addLayer({ id: RAY_LINE, type: 'line', source: RAY_SRC,
     layout: { 'line-cap': 'round' },
-    paint: { 'line-color': '#fff1c2', 'line-width': 2, 'line-opacity': 0.7, 'line-dasharray': [2, 2] },
+    paint: { 'line-color': '#ffb845', 'line-width': 2.5, 'line-opacity': 0.9 },
   });
 
   // Re-project markers when the map zooms so altitude scales with zoom.
@@ -73,11 +73,16 @@ export function addSunPathLayer(map) {
 export function setSunPathVisible(map, vis) {
   visible = vis;
   const v = vis ? 'visible' : 'none';
-  for (const id of [SR_LINE, SS_LINE, RAY_LINE]) {
+  for (const id of [SR_LINE, SS_LINE]) {
     if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', v);
   }
   for (const m of arcMarkers) m.getElement().style.display = vis ? '' : 'none';
   if (liveMarker) liveMarker.getElement().style.display = vis ? '' : 'none';
+}
+
+// Ray line is controlled independently so it stays visible in reflection mode.
+export function setRayLineVisible(map, vis) {
+  if (map.getLayer(RAY_LINE)) map.setLayoutProperty(RAY_LINE, 'visibility', vis ? 'visible' : 'none');
 }
 
 function clearArcMarkers() {
@@ -202,10 +207,9 @@ export function updateSunNow(map, observer, datetime, posOverride = null) {
   }
   const horizKm = horizontalKmAtAltitude(p.altitudeDeg);
   const [glon, glat] = destination(lat, lon, p.azimuthDeg, horizKm);
-  // Live ground ray uses the same fixed length as the sunrise/sunset rays so
-  // it doesn't visually shrink near solar noon.
-  const [rayEndLon, rayEndLat] = destination(lat, lon, p.azimuthDeg, arcRadiusKm * 1.4);
-  setLine(map, RAY_SRC, [[lon, lat], [rayEndLon, rayEndLat]]);
+  // Ray goes from the arc dot's ground position back to the observer — i.e. the
+  // direction from sun to ground, always at the current arc radius length.
+  setLine(map, RAY_SRC, [[glon, glat], [lon, lat]]);
 
   liveSample = { lon: glon, lat: glat, altDeg: p.altitudeDeg, azDeg: p.azimuthDeg };
   if (!liveMarker) {
