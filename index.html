@@ -14,7 +14,7 @@
 <link rel="preconnect" href="https://tiles.openfreemap.org">
 <link rel="preconnect" href="https://photon.komoot.io">
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-<link rel="stylesheet" href="css/style.css?v=29">
+<link rel="stylesheet" href="css/style.css?v=30">
 </head>
 <body>
 <div id="map" aria-label="Map"></div>
@@ -35,10 +35,10 @@
 
   <div id="time-row">
     <div id="time-hh">12:00</div>
-    <button id="date-btn" class="ghostbtn" aria-label="Pick date">
+    <label id="date-btn" class="ghostbtn" for="date-input" tabindex="0" aria-label="Pick date">
       <span id="date-label">Today</span>
-    </button>
-    <input id="date-input" type="date" aria-hidden="true" tabindex="-1">
+    </label>
+    <input id="date-input" type="date" tabindex="-1">
     <div id="sun-alt" aria-label="Body altitude">—</div>
     <div id="rise-set">
       <span id="rise-label">↑ —</span>
@@ -132,7 +132,7 @@
 
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script type="importmap">{ "imports": { "three": "https://unpkg.com/three@0.169.0/build/three.module.js" } }</script>
-<script type="module" src="js/app.js?v=29"></script>
+<script type="module" src="js/app.js?v=30"></script>
 <script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {

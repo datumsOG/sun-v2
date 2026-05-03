@@ -45,15 +45,8 @@ export function initScrubber(els) {
   scrubber.value = String(minutesOfDay(store.get().datetime));
   hh.textContent = formatHHMM(store.get().datetime);
 
-  dateBtn.addEventListener('click', () => {
-    try {
-      if (typeof dateInput.showPicker === 'function') dateInput.showPicker();
-      else dateInput.click();
-    } catch (e) {
-      // showPicker throws if input is hidden / not in user gesture; fallback
-      try { dateInput.focus(); dateInput.click(); } catch {}
-    }
-  });
+  // dateBtn is a <label for="date-input"> — native label activation opens the
+  // date picker on all platforms without JS. No click handler needed here.
   dateInput.addEventListener('change', () => {
     if (!dateInput.value) return;
     const [y, m, d] = dateInput.value.split('-').map(Number);

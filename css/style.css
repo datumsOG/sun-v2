@@ -196,14 +196,18 @@ body.mode-moon #scrubber {
   font-weight: 600;
   letter-spacing: -0.01em;
 }
-/* Date input is offscreen but not display:none so showPicker() works */
+/* Date input is positioned off-screen left so the browser treats it as
+   interactive (required for native date-picker on iOS Safari PWA mode).
+   pointer-events must NOT be none — .click() / label activation both need
+   the element to be pointer-reachable even when visually hidden. */
 #date-input {
-  position: absolute;
-  left: 0; top: 0;
+  position: fixed;
+  left: -300px;
+  top: 0;
   width: 1px; height: 1px;
   opacity: 0;
-  pointer-events: none;
   border: 0; padding: 0; margin: 0;
+  font-size: 16px; /* prevent iOS zoom-on-focus */
 }
 #date-btn {
   font-size: 14px;

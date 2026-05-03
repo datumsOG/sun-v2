@@ -48,7 +48,6 @@ const dom = {
   shadowElevPanel: $('shadow-elev-panel'),
   shadowElev: $('shadow-elev'),
   shadowElevVal: $('shadow-elev-val'),
-  hint: $('hint'),
   toast: $('toast'),
   tiltSlider: $('tilt-slider'),
   radiusSlider: $('radius-slider'),
@@ -481,23 +480,6 @@ function initReflectionDraw(map) {
   map.on('touchcancel', onUp);
 }
 
-function attachLongPress(map, cb) {
-  let timer = null, startPos = null, cancelled = false;
-  const start = (e) => {
-    cancelled = false;
-    startPos = e.point;
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(() => { if (!cancelled) cb(e.lngLat); }, 550);
-  };
-  const move = (e) => {
-    if (!startPos) return;
-    if (Math.hypot(e.point.x - startPos.x, e.point.y - startPos.y) > 6) cancelled = true;
-  };
-  const end = () => { if (timer) clearTimeout(timer); timer = null; startPos = null; };
-  map.on('mousedown', start); map.on('mousemove', move); map.on('mouseup', end);
-  map.on('touchstart', start); map.on('touchmove', move); map.on('touchend', end);
-  map.on('dragstart', () => { cancelled = true; if (timer) { clearTimeout(timer); timer = null; } });
-}
 
 let toastTimer = null;
 function showToast(msg) {

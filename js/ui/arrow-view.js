@@ -53,7 +53,7 @@ let elView, elVideo, elGuide, elDisk, elDiskShadow;
 let elSensorBtn, elCalibrate, elCapture, elArBtn, elArOverlay;
 let arEnabled = false;
 let arDots = [];
-let elArCaster = null, elArObs = null, elArShadowEnd = null, arSvg = null, arShadowLine = null;
+let elArCaster = null, elArObs = null, elArShadowEnd = null, arSvg = null, arShadowLine = null, arPoleLine = null;
 const EYE_HEIGHT_M = 1.6;
 
 export function initCameraView() {
@@ -62,7 +62,7 @@ export function initCameraView() {
   elGuide     = document.getElementById('guide-arrow');
   elDisk      = document.getElementById('body-disk');
   elDiskShadow = document.getElementById('body-disk-shadow');
-  elSensorBtn = null; // removed from UI; permission requested automatically
+  elSensorBtn = document.getElementById('cam-sensor-btn'); // may be null if removed from UI
   elCalibrate = document.getElementById('cam-calibrate');
   elCapture   = document.getElementById('cam-capture');
   elArBtn     = document.getElementById('cam-ar-btn');
@@ -101,12 +101,21 @@ export function initCameraView() {
     arShadowLine.setAttribute('stroke-width', '3');
     arShadowLine.setAttribute('stroke-linecap', 'round');
     arShadowLine.setAttribute('stroke-linejoin', 'round');
-    arShadowLine.setAttribute('opacity', '0.95');
+    arShadowLine.setAttribute('opacity', '0');
     arSvg.appendChild(arShadowLine);
+
+    // Blue vertical pole: caster sphere → observer ground (or screen bottom when ground is off-screen)
+    arPoleLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    arPoleLine.setAttribute('stroke', '#4dd2ff');
+    arPoleLine.setAttribute('stroke-width', '2');
+    arPoleLine.setAttribute('stroke-linecap', 'round');
+    arPoleLine.setAttribute('opacity', '0');
+    arSvg.appendChild(arPoleLine);
+
     elArOverlay.appendChild(arSvg);
   }
 
-  elSensorBtn.addEventListener('click', enableSensors);
+  if (elSensorBtn) elSensorBtn.addEventListener('click', enableSensors);
   elCalibrate.addEventListener('click', calibrate);
   elCapture.addEventListener('click', captureFrame);
 }
@@ -159,7 +168,7 @@ async function enableSensors() {
     if (typeof DeviceOrientationEvent !== 'undefined' &&
         typeof DeviceOrientationEvent.requestPermission === 'function') {
       const res = await DeviceOrientationEvent.requestPermission();
-      if (res !== 'granted') { elSensorBtn.textContent = 'Permission denied'; return; }
+      if (res !== 'granted') { if (elSensorBtn) elSensorBtn.textContent = 'Permission denied'; return; }
     }
     if (!sensorsAttached) {
       window.addEventListener('deviceorientationabsolute', onOrient, true);
@@ -170,7 +179,7 @@ async function enableSensors() {
     elCalibrate.hidden = false;
     elCapture.hidden = false;
   } catch {
-    elSensorBtn.textContent = 'Sensors unavailable';
+    if (elSensorBtn) elSensorBtn.textContent = 'Sensors unavailable';
   }
 }
 
@@ -289,6 +298,24 @@ function projectPoint(worldM, W, H, halfVfovTan) {
   return { x: (ndcX + 1) / 2 * W, y: (1 - ndcY) / 2 * H, dist };
 }
 
+// Extend the ray from p1 through p2, continuing from p2 until it hits a screen edge.
+function extendRayToScreenEdge(p1, p2, W, H) {
+  const dx = p2.x - p1.x;
+  const dy = p2.y - p1.y;
+  if (Math.hypot(dx, dy) < 0.01) return null;
+  let t = Infinity;
+  if (Math.abs(dy) > 0.01) {
+    const ty = dy > 0 ? (H - p2.y) / dy : -p2.y / dy;
+    if (ty > 0) t = Math.min(t, ty);
+  }
+  if (Math.abs(dx) > 0.01) {
+    const tx = dx > 0 ? (W - p2.x) / dx : -p2.x / dx;
+    if (tx > 0) t = Math.min(t, tx);
+  }
+  if (!isFinite(t) || t <= 0) return null;
+  return { x: Math.round(p2.x + t * dx), y: Math.round(p2.y + t * dy) };
+}
+
 function renderAR(W, H, halfVfovTan) {
   if (!elArOverlay) return;
   const colour = moonMode ? '#d0d8e8' : '#ffb845';
@@ -376,14 +403,43 @@ function renderAR(W, H, halfVfovTan) {
     elArShadowEnd.style.display = 'none';
   }
 
-  // ---- Shadow line: body → caster → shadow end ----
-  if (bodyScreen && casterP && endP) {
-    const pts = `${bodyScreen.x},${bodyScreen.y} ${casterP.x},${casterP.y} ${endP.x},${endP.y}`;
+  // ---- Shadow line: body → caster → shadow end (or screen edge when ground is off-screen) ----
+  // When endP is null (ground behind camera), extend the ray to the nearest screen edge so
+  // the shadow direction remains visible even when the camera is pointing at the sky.
+  let effectiveEndP = endP;
+  if (!effectiveEndP && bodyScreen && casterP) {
+    effectiveEndP = extendRayToScreenEdge(bodyScreen, casterP, W, H);
+    // Show shadow-end indicator at screen edge to mark the shadow direction
+    if (effectiveEndP) {
+      elArShadowEnd.style.display = '';
+      elArShadowEnd.style.left = effectiveEndP.x + 'px';
+      elArShadowEnd.style.top  = effectiveEndP.y + 'px';
+      elArShadowEnd.style.background = colour;
+    }
+  }
+
+  if (bodyScreen && casterP) {
+    const pts = effectiveEndP
+      ? `${bodyScreen.x},${bodyScreen.y} ${casterP.x},${casterP.y} ${effectiveEndP.x},${effectiveEndP.y}`
+      : `${bodyScreen.x},${bodyScreen.y} ${casterP.x},${casterP.y}`;
     arShadowLine.setAttribute('points', pts);
     arShadowLine.setAttribute('stroke', colour);
     arShadowLine.setAttribute('opacity', '0.95');
   } else {
     arShadowLine.setAttribute('opacity', '0');
+  }
+
+  // ---- Blue pole: caster sphere → observer ground (or screen bottom) ----
+  if (casterP) {
+    const poleEndY = obsP ? obsP.y : H;
+    const poleEndX = obsP ? obsP.x : casterP.x;
+    arPoleLine.setAttribute('x1', casterP.x);
+    arPoleLine.setAttribute('y1', casterP.y);
+    arPoleLine.setAttribute('x2', poleEndX);
+    arPoleLine.setAttribute('y2', poleEndY);
+    arPoleLine.setAttribute('opacity', '0.85');
+  } else {
+    arPoleLine.setAttribute('opacity', '0');
   }
 }
 
