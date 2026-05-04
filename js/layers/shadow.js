@@ -61,10 +61,13 @@ export function addShadowLayer(map) {
   svgOverlay.setAttribute('style',
     'position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:2;');
 
-  // Sky line: body → caster top → shadow endpoint.
-  lineSky = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  // Sky line: body → caster top → shadow endpoint (polyline so it always
+  // passes through the caster sphere exactly, regardless of projection error).
+  lineSky = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+  lineSky.setAttribute('fill', 'none');
   lineSky.setAttribute('stroke-width', '3');
   lineSky.setAttribute('stroke-linecap', 'round');
+  lineSky.setAttribute('stroke-linejoin', 'round');
   lineSky.setAttribute('opacity', '0');
   svgOverlay.appendChild(lineSky);
 
@@ -236,7 +239,7 @@ function renderOverlay() {
   const endLngLat = endMarker.getLngLat();
   const endPt = mapRef.project([endLngLat.lng, endLngLat.lat]);
 
-  lineSky.setAttribute('x1', bx); lineSky.setAttribute('y1', by);
-  lineSky.setAttribute('x2', endPt.x); lineSky.setAttribute('y2', endPt.y);
+  lineSky.setAttribute('points',
+    `${bx},${by} ${casterTopScreen.x},${casterTopScreen.y} ${endPt.x},${endPt.y}`);
   lineSky.setAttribute('opacity', '0.95');
 }

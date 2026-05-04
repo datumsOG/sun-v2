@@ -592,3 +592,23 @@ https://yourdomain.com/sun-v2/#ll=43.65320,-79.38320&t=2026-05-03T18:30&m=sun
 ```
 Opening this URL restores observer position, datetime, and mode exactly.
 
+---
+
+## Part 8 — v36 Fix: Sky line forced through caster sphere (polyline fix)
+
+**Date:** 2026-05-04
+
+### Bug
+Near sunrise/sunset (and moonrise/moonset), the orange/white sky line from the body position in the arc failed to intersect the blue caster sphere. The line appeared to pass beside or miss the sphere entirely as the time slider moved toward the horizon.
+
+### Root cause
+`project3D()` uses a flat-earth approximation that builds a local coordinate frame for each point individually, using that point's lat/lon as its own origin. When the arc body is far horizontally (near-horizon low altitude = large horizontal distance at the arc radius) and only slightly elevated, the three screen projections (body, caster top, shadow endpoint) accumulate small but visible approximation errors. These errors destroy 3D collinearity on screen — so a `<line>` drawn from body to shadow endpoint does not pass through the caster sphere's screen position.
+
+### Fix
+Changed `lineSky` from `<line>` to `<polyline>` with three explicit waypoints: body screen position → caster top screen position → shadow endpoint screen position. This bypasses the collinearity requirement entirely — the line is forced through all three computed screen points regardless of any approximation errors in `project3D`.
+
+**Files changed:**
+- `js/layers/shadow.js`: `lineSky` element changed to `polyline` in `addShadowLayer()`; `renderOverlay()` updated to set `points` attribute (`"${bx},${by} ${casterTopScreen.x},${casterTopScreen.y} ${endPt.x},${endPt.y}"`) instead of `x1,y1,x2,y2`.
+- `sw.js`: cache bumped `v35` → `v36`
+- `index.html`: asset query strings bumped `?v=35` → `?v=36`
+
