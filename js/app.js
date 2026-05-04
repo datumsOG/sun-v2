@@ -3,10 +3,10 @@
 import * as store from './state.js';
 import { initMap, whenStyleReady } from './map.js';
 import { addObserverLayer, setObserver } from './layers/observer.js';
-import { addSunPathLayer, updateSunPathDay, updateSunNow, setSunPathVisible, setRayLineVisible, setArcRadiusKm, getArcSamples, getArcRadiusKm } from './layers/sun-path.js';
+import { addSunPathLayer, updateSunPathDay, updateSunNow, setSunPathVisible, setRayLineVisible, setBodyColor, setArcRadiusKm, getArcSamples, getArcRadiusKm } from './layers/sun-path.js';
 import { addReflectionLayer, updateReflectionDay, updateReflectionNow, updateReflectionWall, setReflectionVisible } from './layers/reflection.js';
 import { addTargetLayer, setTarget } from './layers/target.js';
-import { addShadowLayer, updateShadow, setShadowVisible, setShadowHeight } from './layers/shadow.js';
+import { addShadowLayer, updateShadow, setShadowVisible, setShadowHeight, setFloorHeight } from './layers/shadow.js';
 import { initScrubber, renderScrubberTicks, setMoonPhaseMarker, setScrubberRange } from './ui/scrubber.js';
 import { initSearch } from './ui/search.js';
 import { enableCompass, disableCompass } from './ui/sensor.js';
@@ -48,6 +48,8 @@ const dom = {
   shadowElevPanel: $('shadow-elev-panel'),
   shadowElev: $('shadow-elev'),
   shadowElevVal: $('shadow-elev-val'),
+  floorElev: $('floor-elev'),
+  floorElevVal: $('floor-elev-val'),
   toast: $('toast'),
   tiltSlider: $('tilt-slider'),
   radiusSlider: $('radius-slider'),
@@ -202,6 +204,18 @@ async function main() {
   setShadowHeight(sliderToHeight(dom.shadowElev.value));
   dom.shadowElevVal.textContent = `${sliderToHeight(dom.shadowElev.value)} m`;
 
+  if (dom.floorElev) {
+    dom.floorElev.addEventListener('input', () => {
+      const h = sliderToHeight(dom.floorElev.value);
+      setFloorHeight(h);
+      dom.floorElevVal.textContent = `${h} m`;
+      const s = store.get();
+      if (s.shadowEnabled) updateShadow(map, s.observer, s.datetime, s.mode === 'moon');
+    });
+    setFloorHeight(sliderToHeight(dom.floorElev.value));
+    dom.floorElevVal.textContent = `${sliderToHeight(dom.floorElev.value)} m`;
+  }
+
   // Vertical sliders (right edge)
   if (dom.tiltSlider) {
     dom.tiltSlider.addEventListener('input', () => {
@@ -343,8 +357,9 @@ function syncChrome(s) {
 
   if (inCamera) showCameraView(); else hideCameraView();
 
-  setSunPathVisible(map, !inCamera && !s.reflectionEnabled);
-  setRayLineVisible(map, !inCamera);   // orange ray always shown in map mode
+  setSunPathVisible(map, !inCamera);
+  setRayLineVisible(map, !inCamera);
+  setBodyColor(map, !inSun);
   setReflectionVisible(map, !inCamera && s.reflectionEnabled);
   setShadowVisible(map, !inCamera && s.shadowEnabled);
 

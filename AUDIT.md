@@ -468,6 +468,43 @@ Network-first service worker. On install caches `./`, `./index.html`, `./manifes
 
 ---
 
+---
+
+## Part 5b — Execution Log (2026-05-04)
+
+**Commit:** (see git log)
+
+### N1 — Reflection mode no longer hides arc (`js/app.js`)
+- Removed `&& !s.reflectionEnabled` from the `setSunPathVisible` call in `syncChrome()`.
+- Arc dots, live body marker, and sunrise/sunset bearing lines now remain visible when reflection mode is active.
+
+### N2 — Drop line + moon-mode ray recolouring (`js/layers/sun-path.js`, `js/app.js`)
+- Added `dropSvg` / `dropLine` SVG overlay elements created in `addSunPathLayer()`.
+- `renderDropLine()` fires on every `map render` event: draws an SVG line from the elevated arc-dot screen position (`map.project([lon,lat]) + offsetForSample`) down to the ground anchor. Hidden if the elevation offset is < 3 px.
+- Added `setBodyColor(map, moonMode)` export: sets `dropLineColor` module var, updates `dropLine` stroke, and calls `map.setPaintProperty(RAY_LINE, 'line-color', ...)`. Yellow (`#ffb845`) in sun mode, white (`#d0d8e8`) in moon mode.
+- `setSunPathVisible` also toggles `dropSvg.style.display` so the drop line hides with the rest of the arc.
+- `syncChrome()` in `app.js` calls `setBodyColor(map, !inSun)` on every mode/view/shadow/reflection change.
+
+### N3 — Shadow on by default, caster height defaults to 0 m
+- `js/state.js`: `shadowEnabled: false` → `shadowEnabled: true`.
+- `index.html`: caster slider `value="333"` → `value="0"`.
+- `js/layers/shadow.js`: `OBJECT_H_M` initial value `10` → `0`.
+- Display text initialises to "0 m" via existing `sliderToHeight(0) === 0` path.
+
+### N4 — Floor slider (`js/layers/shadow.js`, `index.html`, `js/app.js`, `css/style.css`)
+- `shadow.js`: added `FLOOR_H_M = 0`, `setFloorHeight(h)` / `getFloorHeight()` exports.
+- `setShadowHeight` and `setShadowVisible` now use `FLOOR_H_M + OBJECT_H_M` for `setAnchorLiftMetres` and shadow distance: `totalH / tan(el)`.
+- `renderOverlay()`: observer dot offset to floor height (via `project3D`); caster sphere offset to `floor + caster`; SVG pole drawn from floor level to caster top.
+- `index.html`: shadow-elev-panel restructured into two `.elev-row` divs (Caster / Floor), each with label + slider + value span.
+- `css/style.css`: shadow-elev-panel changed to `flex-direction: column`; `.elev-row` flex-row class added.
+- `app.js`: added `dom.floorElev` / `dom.floorElevVal`; floor slider `input` handler mirrors caster handler; imports `setFloorHeight`.
+
+### Cache bump
+- Service worker cache: `v31` → `v32`.
+- Asset query strings: `?v=31` → `?v=32`.
+
+---
+
 ### Known limitations and open work
 
 - **AR coordinate frame calibration:** The HFOV is hardcoded at 68° which is close but may drift on different phones. The "Align" button corrects azimuth but not elevation.

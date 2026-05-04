@@ -15,7 +15,8 @@ import { getPosition, getMoonPos } from '../solar.js';
 import { destination, project3D } from '../util.js';
 import { getLiveBodyAnchor, setAnchorLiftMetres } from './sun-path.js';
 
-let OBJECT_H_M = 10;
+let OBJECT_H_M = 0;   // caster height above floor
+let FLOOR_H_M = 0;    // floor elevation above ground (e.g. top of a building)
 const MAX_SHADOW_KM = 4.0;
 const SPHERE_RADIUS_PX = 8;     // half the visual diameter of the caster sphere
 
@@ -33,13 +34,23 @@ let visible = false;
 export function setShadowHeight(h) {
   // Allow 0 (caster on the ground); only reject NaN.
   const n = Number(h);
-  OBJECT_H_M = Number.isFinite(n) && n >= 0 ? n : 10;
+  OBJECT_H_M = Number.isFinite(n) && n >= 0 ? n : 0;
   if (visible) {
-    setAnchorLiftMetres(OBJECT_H_M); // keep arc anchored to caster top
+    setAnchorLiftMetres(FLOOR_H_M + OBJECT_H_M);
     update();
   }
 }
 export function getShadowHeight() { return OBJECT_H_M; }
+
+export function setFloorHeight(h) {
+  const n = Number(h);
+  FLOOR_H_M = Number.isFinite(n) && n >= 0 ? n : 0;
+  if (visible) {
+    setAnchorLiftMetres(FLOOR_H_M + OBJECT_H_M);
+    update();
+  }
+}
+export function getFloorHeight() { return FLOOR_H_M; }
 
 export function addShadowLayer(map) {
   mapRef = map;
@@ -75,9 +86,7 @@ export function addShadowLayer(map) {
 export function setShadowVisible(map, vis) {
   visible = !!vis;
   if (svgOverlay) svgOverlay.style.display = vis ? '' : 'none';
-  // Re-anchor the arc to the caster top while shadow mode is active so the
-  // body→caster→ground ray is geometrically collinear. Reset to 0 when off.
-  setAnchorLiftMetres(vis ? OBJECT_H_M : 0);
+  setAnchorLiftMetres(vis ? FLOOR_H_M + OBJECT_H_M : 0);
   if (!vis) clearMarkers();
   if (vis) update();
 }
@@ -132,10 +141,11 @@ function update() {
   }
   casterMarker.setLngLat([lon, lat]);
 
-  // Shadow ground endpoint
+  // Shadow ground endpoint — distance uses total height above ground (floor + caster)
   if (p.altitudeDeg > 0.5) {
     const tanEl = Math.tan(p.altitudeDeg * Math.PI / 180);
-    const flatKm = Math.min((OBJECT_H_M / tanEl) / 1000, MAX_SHADOW_KM);
+    const totalH = FLOOR_H_M + OBJECT_H_M;
+    const flatKm = Math.min((totalH / tanEl) / 1000, MAX_SHADOW_KM);
     const shadowAz = (p.azimuthDeg + 180) % 360;
     const endLngLat = destination(lat, lon, shadowAz, flatKm);
 
@@ -159,22 +169,34 @@ function renderOverlay() {
   const colour = mode === 'moon' ? '#d0d8e8' : '#ffb845';
   lineSky.setAttribute('stroke', colour);
 
-  // True 3D screen position of the caster top (matches the same projection
-  // used for arc dots, so the line passes through the sphere exactly).
-  const obsScreen = mapRef.project([observerCache.lon, observerCache.lat]);
-  const casterTopScreen = project3D(mapRef, observerCache.lon, observerCache.lat, OBJECT_H_M);
+  const groundScreen = mapRef.project([observerCache.lon, observerCache.lat]);
+  // Floor level: where the observer dot sits (elevated when floor > 0).
+  const floorScreen = FLOOR_H_M > 0.01
+    ? project3D(mapRef, observerCache.lon, observerCache.lat, FLOOR_H_M)
+    : groundScreen;
+  // Caster top: floor + caster height.
+  const casterTopScreen = project3D(mapRef, observerCache.lon, observerCache.lat, FLOOR_H_M + OBJECT_H_M);
+
+  // Observer dot lifted to floor height.
+  if (observerDot) {
+    observerDot.setOffset([
+      floorScreen.x - groundScreen.x,
+      floorScreen.y - groundScreen.y,
+    ]);
+  }
+  // Caster sphere at floor + caster height.
   if (casterMarker) {
     casterMarker.setOffset([
-      casterTopScreen.x - obsScreen.x,
-      casterTopScreen.y - obsScreen.y,
+      casterTopScreen.x - groundScreen.x,
+      casterTopScreen.y - groundScreen.y,
     ]);
   }
   const casterTopX = casterTopScreen.x;
   const casterTopY = casterTopScreen.y;
 
-  // Vertical pole: observer dot → caster sphere centre.
-  linePole.setAttribute('x1', obsScreen.x); linePole.setAttribute('y1', obsScreen.y);
-  linePole.setAttribute('x2', casterTopX);  linePole.setAttribute('y2', casterTopY);
+  // Vertical pole: floor level → caster sphere centre.
+  linePole.setAttribute('x1', floorScreen.x); linePole.setAttribute('y1', floorScreen.y);
+  linePole.setAttribute('x2', casterTopX);    linePole.setAttribute('y2', casterTopY);
   linePole.setAttribute('opacity', OBJECT_H_M > 0.01 ? '0.85' : '0');
 
   const body = getLiveBodyAnchor();

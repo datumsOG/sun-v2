@@ -317,8 +317,8 @@ body.mode-moon #body-toggle { color: var(--moonblue); }
   border: 1px solid rgba(61, 90, 173, 0.4);
   border-radius: 10px;
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  gap: 4px;
   font-size: 13px;
   color: #ffffff;
   transition: opacity 200ms ease;
@@ -327,9 +327,14 @@ body.mode-moon #body-toggle { color: var(--moonblue); }
   opacity: 0.35;
   pointer-events: none;
 }
-#shadow-elev-panel label { font-weight: 600; white-space: nowrap; color: #ffffff; }
-#shadow-elev { flex: 1; height: 4px; }
-#shadow-elev-val { font-variant-numeric: tabular-nums; min-width: 56px; text-align: right; color: #ffffff; }
+.elev-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.elev-row label { font-weight: 600; white-space: nowrap; color: #ffffff; min-width: 42px; }
+.elev-row input[type=range] { flex: 1; height: 4px; }
+.elev-row span { font-variant-numeric: tabular-nums; min-width: 56px; text-align: right; color: #ffffff; }
 
 /* ===== Vertical sliders (right edge) =====
    Custom thin off-white tracks with a small flat thumb.

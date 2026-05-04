@@ -23,6 +23,9 @@ let arcMarkers = [];
 let liveSample = null;          // { lon, lat, altDeg }
 let liveMarker = null;
 let visible = true;
+let dropSvg = null;
+let dropLine = null;
+let dropLineColor = '#ffb845';  // yellow sun, white moon
 
 export function setArcRadiusKm(km) {
   arcRadiusKm = Math.max(0.02, +km || 1.5);
@@ -65,9 +68,21 @@ export function addSunPathLayer(map) {
     paint: { 'line-color': '#ffb845', 'line-width': 2.5, 'line-opacity': 0.9 },
   });
 
+  // Drop line: vertical SVG from elevated arc dot to its ground anchor.
+  dropSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  dropSvg.setAttribute('style', 'position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:2;');
+  dropLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  dropLine.setAttribute('stroke', dropLineColor);
+  dropLine.setAttribute('stroke-width', '2');
+  dropLine.setAttribute('stroke-linecap', 'round');
+  dropLine.setAttribute('opacity', '0');
+  dropSvg.appendChild(dropLine);
+  document.body.appendChild(dropSvg);
+
   // Re-project markers when the map zooms so altitude scales with zoom.
   map.on('zoom', updateAllOffsets);
   map.on('move', updateAllOffsets);
+  map.on('render', renderDropLine);
 }
 
 export function setSunPathVisible(map, vis) {
@@ -78,6 +93,13 @@ export function setSunPathVisible(map, vis) {
   }
   for (const m of arcMarkers) m.getElement().style.display = vis ? '' : 'none';
   if (liveMarker) liveMarker.getElement().style.display = vis ? '' : 'none';
+  if (dropSvg) dropSvg.style.display = vis ? '' : 'none';
+}
+
+export function setBodyColor(map, moonMode) {
+  dropLineColor = moonMode ? '#d0d8e8' : '#ffb845';
+  if (dropLine) dropLine.setAttribute('stroke', dropLineColor);
+  if (map && map.getLayer(RAY_LINE)) map.setPaintProperty(RAY_LINE, 'line-color', dropLineColor);
 }
 
 // Ray line is controlled independently so it stays visible in reflection mode.
@@ -234,6 +256,26 @@ export function getLiveBodyAnchor() {
 /** Snapshot of the arc samples (for AR overlay rendering). */
 export function getArcSamples() {
   return arcSamples.slice();
+}
+
+function renderDropLine() {
+  if (!dropLine) return;
+  if (!visible || !mapRef || !liveSample) {
+    dropLine.setAttribute('opacity', '0');
+    return;
+  }
+  const offset = offsetForSample(liveSample);
+  // Only draw if the arc dot is meaningfully elevated off the ground (≥3 px).
+  if (Math.abs(offset[1]) < 3 && Math.abs(offset[0]) < 3) {
+    dropLine.setAttribute('opacity', '0');
+    return;
+  }
+  const ground = mapRef.project([liveSample.lon, liveSample.lat]);
+  dropLine.setAttribute('x1', ground.x + offset[0]);
+  dropLine.setAttribute('y1', ground.y + offset[1]);
+  dropLine.setAttribute('x2', ground.x);
+  dropLine.setAttribute('y2', ground.y);
+  dropLine.setAttribute('opacity', '0.85');
 }
 
 function setLine(map, srcId, coords) {

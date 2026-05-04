@@ -25,7 +25,7 @@ const state = {
   moonDatetime: null,
   mode: 'sun',
   view: 'map',
-  shadowEnabled: false,
+  shadowEnabled: true,
   reflectionEnabled: false,
   compassEnabled: false,
   compassHeading: null,

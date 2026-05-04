@@ -14,7 +14,7 @@
 <link rel="preconnect" href="https://tiles.openfreemap.org">
 <link rel="preconnect" href="https://photon.komoot.io">
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-<link rel="stylesheet" href="css/style.css?v=31">
+<link rel="stylesheet" href="css/style.css?v=32">
 </head>
 <body>
 <div id="map" aria-label="Map"></div>
@@ -87,9 +87,16 @@
   </div>
 
   <div id="shadow-elev-panel" hidden>
-    <label for="shadow-elev">Caster height</label>
-    <input id="shadow-elev" type="range" min="0" max="1000" step="1" value="333">
-    <span id="shadow-elev-val">10 m</span>
+    <div class="elev-row">
+      <label for="shadow-elev">Caster</label>
+      <input id="shadow-elev" type="range" min="0" max="1000" step="1" value="0">
+      <span id="shadow-elev-val">0 m</span>
+    </div>
+    <div class="elev-row">
+      <label for="floor-elev">Floor</label>
+      <input id="floor-elev" type="range" min="0" max="1000" step="1" value="0">
+      <span id="floor-elev-val">0 m</span>
+    </div>
   </div>
 
 </section>
@@ -132,7 +139,7 @@
 
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script type="importmap">{ "imports": { "three": "https://unpkg.com/three@0.169.0/build/three.module.js" } }</script>
-<script type="module" src="js/app.js?v=31"></script>
+<script type="module" src="js/app.js?v=32"></script>
 <script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
