@@ -1,15 +1,15 @@
-// Shadow visualisation (Shadow mode):
+// Shadow visualisation:
 //
-//   • White ground dot at the observer (caster's ground projection).
-//   • Light-blue caster sphere lifted by caster height (in metres).
-//   • Light-blue vertical pole connecting the two.
-//   • Sun→caster line (in body colour) ending exactly at the sphere edge.
-//   • White-dot→ground-end line (same body colour, same vector continued)
-//     ending in a filled body-coloured circle.
+//   • White dot at true ground level (observer lat/lon, 0 m).
+//   • Green dot at floor height + green line connecting it to ground dot
+//     (only shown when floor > 0 — represents shooting from a building, etc.)
+//   • Light-blue caster sphere above the floor dot.
+//   • Light-blue vertical pole from floor level → caster top.
+//   • Body-coloured sky line from sun/moon body through caster top to shadow end.
+//   • Body-coloured shadow endpoint dot on the ground.
 //
 // All lines are drawn in a single full-screen SVG overlay that re-renders on
-// every map render frame so the geometry stays glued to the map regardless
-// of zoom/tilt/pan.
+// every map render frame so geometry stays glued to the map.
 
 import { getPosition, getMoonPos } from '../solar.js';
 import { destination, project3D } from '../util.js';
@@ -18,12 +18,13 @@ import { getLiveBodyAnchor, setAnchorLiftMetres } from './sun-path.js';
 let OBJECT_H_M = 0;   // caster height above floor
 let FLOOR_H_M = 0;    // floor elevation above ground (e.g. top of a building)
 const MAX_SHADOW_KM = 4.0;
-const SPHERE_RADIUS_PX = 8;     // half the visual diameter of the caster sphere
+const FLOOR_COLOR = '#4dff9a';  // green for floor dot + line
 
 let mapRef = null;
-let svgOverlay = null, lineSky = null, linePole = null, lineGround = null;
+let svgOverlay = null, lineSky = null, linePole = null, lineFloor = null;
 let casterMarker = null;
-let observerDot = null;
+let groundDot = null;   // white dot at true ground level (never offset)
+let floorDot = null;    // green dot at floor height (shown when floor > 0)
 let endMarker = null;
 
 let mode = 'sun';
@@ -32,7 +33,6 @@ let datetimeCache = null;
 let visible = false;
 
 export function setShadowHeight(h) {
-  // Allow 0 (caster on the ground); only reject NaN.
   const n = Number(h);
   OBJECT_H_M = Number.isFinite(n) && n >= 0 ? n : 0;
   if (visible) {
@@ -60,26 +60,33 @@ export function addShadowLayer(map) {
   svgOverlay.id = 'shadow-svg';
   svgOverlay.setAttribute('style',
     'position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:2;');
-  // Single straight ray from the body through the caster top to the ground
-  // shadow point. The arc is re-anchored to the caster top while shadow mode
-  // is active (see setAnchorLiftMetres in sun-path.js), so this line is
-  // genuinely collinear — it visibly passes through the sphere.
+
+  // Sky line: body → caster top → shadow endpoint.
   lineSky = document.createElementNS('http://www.w3.org/2000/svg', 'line');
   lineSky.setAttribute('stroke-width', '3');
   lineSky.setAttribute('stroke-linecap', 'round');
-  lineSky.setAttribute('opacity', '0.95');
+  lineSky.setAttribute('opacity', '0');
   svgOverlay.appendChild(lineSky);
-  // Vertical pole: observer ground point → caster top, in caster colour (light blue).
+
+  // Green line: ground dot → floor dot (only visible when floor > 0).
+  lineFloor = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  lineFloor.setAttribute('stroke', FLOOR_COLOR);
+  lineFloor.setAttribute('stroke-width', '2');
+  lineFloor.setAttribute('stroke-linecap', 'round');
+  lineFloor.setAttribute('opacity', '0');
+  svgOverlay.appendChild(lineFloor);
+
+  // Blue pole: floor level → caster top.
   linePole = document.createElementNS('http://www.w3.org/2000/svg', 'line');
   linePole.setAttribute('stroke', '#4dd2ff');
   linePole.setAttribute('stroke-width', '2');
   linePole.setAttribute('stroke-linecap', 'round');
-  linePole.setAttribute('opacity', '0.85');
+  linePole.setAttribute('opacity', '0');
   svgOverlay.appendChild(linePole);
+
   document.body.appendChild(svgOverlay);
   svgOverlay.style.display = 'none';
 
-  // Re-render every animation frame so SVG stays in lockstep with the map.
   map.on('render', renderOverlay);
 }
 
@@ -93,7 +100,8 @@ export function setShadowVisible(map, vis) {
 
 function clearMarkers() {
   if (casterMarker) { casterMarker.remove(); casterMarker = null; }
-  if (observerDot)  { observerDot.remove();  observerDot = null; }
+  if (groundDot)    { groundDot.remove();    groundDot = null; }
+  if (floorDot)     { floorDot.remove();     floorDot = null; }
   if (endMarker)    { endMarker.remove();    endMarker = null; }
 }
 
@@ -103,12 +111,6 @@ export function updateShadow(map, observer, datetime, moonMode = false) {
   mode = moonMode ? 'moon' : 'sun';
   if (!visible) return;
   update();
-}
-
-function metresToPixels(metres, lat) {
-  if (!mapRef) return 0;
-  const mPerPx = 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, mapRef.getZoom());
-  return metres / mPerPx;
 }
 
 function update() {
@@ -123,16 +125,30 @@ function update() {
 
   const { lat, lon } = observer;
 
-  // White ground dot at observer
-  if (!observerDot) {
+  // White ground dot — always at true ground, no pixel offset.
+  if (!groundDot) {
     const dot = document.createElement('div');
     dot.style.cssText = 'width:12px;height:12px;border-radius:50%;background:#fff;box-shadow:0 0 4px rgba(0,0,0,0.6);pointer-events:none;';
-    observerDot = new maplibregl.Marker({ element: dot }).setLngLat([lon, lat]).addTo(mapRef);
+    groundDot = new maplibregl.Marker({ element: dot }).setLngLat([lon, lat]).addTo(mapRef);
   } else {
-    observerDot.setLngLat([lon, lat]);
+    groundDot.setLngLat([lon, lat]);
   }
 
-  // Caster sphere
+  // Green floor dot — only when floor > 0.
+  if (FLOOR_H_M > 0.01) {
+    if (!floorDot) {
+      const dot = document.createElement('div');
+      dot.style.cssText = `width:12px;height:12px;border-radius:50%;background:${FLOOR_COLOR};box-shadow:0 0 6px rgba(77,255,154,0.55);pointer-events:none;`;
+      floorDot = new maplibregl.Marker({ element: dot, offset: [0, 0] })
+        .setLngLat([lon, lat]).addTo(mapRef);
+    } else {
+      floorDot.setLngLat([lon, lat]);
+    }
+  } else {
+    if (floorDot) { floorDot.remove(); floorDot = null; }
+  }
+
+  // Caster sphere.
   if (!casterMarker) {
     const sphere = document.createElement('div');
     sphere.className = 'caster-sphere';
@@ -141,11 +157,11 @@ function update() {
   }
   casterMarker.setLngLat([lon, lat]);
 
-  // Shadow ground endpoint — distance uses total height above ground (floor + caster)
+  // Shadow ground endpoint — distance uses total height above ground.
   if (p.altitudeDeg > 0.5) {
     const tanEl = Math.tan(p.altitudeDeg * Math.PI / 180);
     const totalH = FLOOR_H_M + OBJECT_H_M;
-    const flatKm = Math.min((totalH / tanEl) / 1000, MAX_SHADOW_KM);
+    const flatKm = Math.min(totalH > 0 ? (totalH / tanEl) / 1000 : 0, MAX_SHADOW_KM);
     const shadowAz = (p.azimuthDeg + 180) % 360;
     const endLngLat = destination(lat, lon, shadowAz, flatKm);
 
@@ -157,6 +173,7 @@ function update() {
       endMarker.setLngLat(endLngLat);
     }
     endMarker.getElement().style.background = colour;
+    endMarker.getElement().style.display = totalH > 0 ? '' : 'none';
   } else {
     if (endMarker) { endMarker.remove(); endMarker = null; }
   }
@@ -170,37 +187,43 @@ function renderOverlay() {
   lineSky.setAttribute('stroke', colour);
 
   const groundScreen = mapRef.project([observerCache.lon, observerCache.lat]);
-  // Floor level: where the observer dot sits (elevated when floor > 0).
   const floorScreen = FLOOR_H_M > 0.01
     ? project3D(mapRef, observerCache.lon, observerCache.lat, FLOOR_H_M)
     : groundScreen;
-  // Caster top: floor + caster height.
   const casterTopScreen = project3D(mapRef, observerCache.lon, observerCache.lat, FLOOR_H_M + OBJECT_H_M);
 
-  // Observer dot lifted to floor height.
-  if (observerDot) {
-    observerDot.setOffset([
+  // Floor dot: offset from ground marker position to floor height.
+  if (floorDot) {
+    floorDot.setOffset([
       floorScreen.x - groundScreen.x,
       floorScreen.y - groundScreen.y,
     ]);
   }
-  // Caster sphere at floor + caster height.
+
+  // Caster sphere: offset to floor + caster height.
   if (casterMarker) {
     casterMarker.setOffset([
       casterTopScreen.x - groundScreen.x,
       casterTopScreen.y - groundScreen.y,
     ]);
   }
-  const casterTopX = casterTopScreen.x;
-  const casterTopY = casterTopScreen.y;
 
-  // Vertical pole: floor level → caster sphere centre.
+  // Green line: ground → floor (only when floor > 0).
+  if (FLOOR_H_M > 0.01) {
+    lineFloor.setAttribute('x1', groundScreen.x); lineFloor.setAttribute('y1', groundScreen.y);
+    lineFloor.setAttribute('x2', floorScreen.x);  lineFloor.setAttribute('y2', floorScreen.y);
+    lineFloor.setAttribute('opacity', '0.85');
+  } else {
+    lineFloor.setAttribute('opacity', '0');
+  }
+
+  // Blue pole: floor → caster top (only when caster > 0).
   linePole.setAttribute('x1', floorScreen.x); linePole.setAttribute('y1', floorScreen.y);
-  linePole.setAttribute('x2', casterTopX);    linePole.setAttribute('y2', casterTopY);
+  linePole.setAttribute('x2', casterTopScreen.x); linePole.setAttribute('y2', casterTopScreen.y);
   linePole.setAttribute('opacity', OBJECT_H_M > 0.01 ? '0.85' : '0');
 
   const body = getLiveBodyAnchor();
-  if (!body || !endMarker) {
+  if (!body || !endMarker || endMarker.getElement().style.display === 'none') {
     lineSky.setAttribute('opacity', '0');
     return;
   }

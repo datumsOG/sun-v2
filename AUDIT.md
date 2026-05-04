@@ -1,5 +1,10 @@
 # Sun · Light Planner — Code Audit & Fix Log
 
+> **Standing rule for all future Claude sessions:**
+> Every prompt that results in code changes **must** include an update to this file before the final commit. Log what changed, which files, and why. This is non-negotiable — treat it as part of the definition of done.
+
+
+
 **Date:** 2026-05-03  
 **Audited by:** Claude Sonnet 4.6  
 **Commit at audit time:** `0cc0eb9` (checkpoint before any changes)
@@ -502,6 +507,32 @@ Network-first service worker. On install caches `./`, `./index.html`, `./manifes
 ### Cache bump
 - Service worker cache: `v31` → `v32`.
 - Asset query strings: `?v=31` → `?v=32`.
+
+---
+
+---
+
+## Part 6 — Shadow always-on, green floor indicator (2026-05-04)
+
+**Commit:** (see git log)
+
+### Changes
+
+#### Shadow mode permanently on — toggle removed
+- `index.html`: removed `<button id="shadow-toggle">` from the control row.
+- `js/app.js`: removed `dom.shadowToggle` from the dom map; removed click handler; `setShadowVisible` now called with `!inCamera` (no `s.shadowEnabled` guard); removed toggle active/aria-pressed state management from `syncChrome`; shadow panel no longer toggled to `disabled` class.
+- `js/state.js`: `shadowEnabled: true` default unchanged (set in Part 5); the field is retained but never written to false again.
+- The floor and caster sliders are now always visible in map mode, always interactive.
+
+#### Green floor dot + green ground→floor line (`js/layers/shadow.js`)
+- Renamed `observerDot` → `groundDot`. It stays at true ground level with **no pixel offset** — it never moves off the map surface.
+- Added `floorDot`: a green (`#4dff9a`) dot created and offset to floor height when `FLOOR_H_M > 0.01`, destroyed when floor returns to 0.
+- Added `lineFloor` SVG line (green, `stroke-width: 2`): drawn from `groundScreen` to `floorScreen` when floor > 0, hidden otherwise.
+- SVG element order in overlay: `lineSky` (body→shadow), `lineFloor` (ground→floor), `linePole` (floor→caster). Each hides independently via `opacity`.
+- Shadow endpoint dot and sky line are hidden when both floor and caster are 0 (no geometry to draw).
+
+### Cache bump
+- `v33` → `v34`.
 
 ---
 

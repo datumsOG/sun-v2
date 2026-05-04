@@ -41,7 +41,6 @@ const dom = {
   viewIconMap: $('view-icon-map'),
   locateBtn: $('locate-btn'),
   compassToggle: $('compass-toggle'),
-  shadowToggle: $('shadow-toggle'),
   reflectionToggle: $('reflection-toggle'),
   reminderBtn: $('reminder-btn'),
   shareBtn: $('share-btn'),
@@ -186,11 +185,6 @@ async function main() {
         showToast('Compass denied');
       }
     }
-  });
-
-  dom.shadowToggle.addEventListener('click', () => {
-    const next = !store.get().shadowEnabled;
-    store.set({ shadowEnabled: next });
   });
 
   dom.shadowElev.addEventListener('input', () => {
@@ -361,7 +355,7 @@ function syncChrome(s) {
   setRayLineVisible(map, !inCamera);
   setBodyColor(map, !inSun);
   setReflectionVisible(map, !inCamera && s.reflectionEnabled);
-  setShadowVisible(map, !inCamera && s.shadowEnabled);
+  setShadowVisible(map, !inCamera);
 
   // Body icon: shows what you'd switch TO. In sun mode → show moon icon.
   if (dom.bodyIconSun)  dom.bodyIconSun.classList.toggle('hide', inSun);
@@ -372,8 +366,6 @@ function syncChrome(s) {
   if (dom.viewIconMap)    dom.viewIconMap.classList.toggle('hide', !inCamera);
 
   // Toggle button visual states
-  dom.shadowToggle.classList.toggle('active', s.shadowEnabled);
-  dom.shadowToggle.setAttribute('aria-pressed', s.shadowEnabled ? 'true' : 'false');
   dom.reflectionToggle.classList.toggle('active', s.reflectionEnabled);
   dom.reflectionToggle.setAttribute('aria-pressed', s.reflectionEnabled ? 'true' : 'false');
 
@@ -385,10 +377,9 @@ function syncChrome(s) {
     return;
   }
 
-  // Shadow elevation panel: always present, dimmed when shadow mode is off
+  // Shadow elevation panel: always visible in map mode.
   if (dom.shadowElevPanel) {
     dom.shadowElevPanel.hidden = inCamera;
-    dom.shadowElevPanel.classList.toggle('disabled', !s.shadowEnabled);
   }
 
   if (s.reflectionEnabled) {
