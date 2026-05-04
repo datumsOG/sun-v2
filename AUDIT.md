@@ -442,6 +442,32 @@ Network-first service worker. On install caches `./`, `./index.html`, `./manifes
 
 ---
 
+---
+
+## Part 5 — New Work Plan (2026-05-04)
+
+**Checkpoint commit before starting.**
+
+### Issues / feature requests
+
+| # | Severity | Description |
+|---|----------|-------------|
+| N1 | BUG | Reflection mode hides sun/moon arc, sunrise/sunset bearing lines — they should remain visible in all map modes |
+| N2 | FEATURE | New "drop line" from elevated arc dot straight down to its ground anchor. Yellow in sun mode, white in moon mode. The existing RAY_LINE (ground ray) should also turn white in moon mode |
+| N3 | FEATURE | Shadow mode on by default; caster height slider defaults to 0 m |
+| N4 | FEATURE | New "Floor" slider: raises the observer dot and caster sphere by an observer elevation (e.g., top of a building), adjusts total shadow length accordingly |
+
+### Fix Plan
+
+| # | File(s) | Action |
+|---|---------|--------|
+| N1 | `js/app.js` | Remove `&& !s.reflectionEnabled` from `setSunPathVisible` call in `syncChrome()` |
+| N2 | `js/layers/sun-path.js`, `js/app.js` | Add SVG drop-line overlay in sun-path; export `setBodyColor(map, moonMode)` to recolour RAY_LINE + drop line; call from `syncChrome` on mode change |
+| N3 | `js/state.js`, `index.html`, `js/app.js` | `shadowEnabled: true`; slider `value="0"`; init display "0 m" |
+| N4 | `js/layers/shadow.js`, `index.html`, `js/app.js`, `css/style.css` | Add `FLOOR_H_M`, `setFloorHeight()`; observer dot offset to floor height; caster offset to floor+caster; shadow distance = (floor+caster)/tan(el); arc anchor = floor+caster; add floor `<input>` in shadow-elev-panel |
+
+---
+
 ### Known limitations and open work
 
 - **AR coordinate frame calibration:** The HFOV is hardcoded at 68° which is close but may drift on different phones. The "Align" button corrects azimuth but not elevation.
