@@ -536,6 +536,29 @@ Network-first service worker. On install caches `./`, `./index.html`, `./manifes
 
 ---
 
+---
+
+## Part 7 — Shadow graphics regression fix + drop line sync (2026-05-04)
+
+**Commit:** (see git log)
+
+### Bugs fixed
+
+#### Shadow caster sphere / blue pole / sky line not showing (`js/layers/shadow.js`)
+Root cause: v34 added `endMarker.getElement().style.display === 'none'` as the sky-line early-return guard in `renderOverlay()`. This was fragile — it relied on an inline style set in `update()` and the condition was always true at initial load (both sliders at 0 → totalH=0 → endMarker hidden via inline style). When sliders were raised, the sky line draw path was blocked until the next direct `renderOverlay()` call, and the check introduced a dependency between two functions that shouldn't need to know each other's internal state.
+
+Fix: removed `endMarker.style.display` manipulation entirely. `endMarker` is now only created when `totalH > 0.01` AND `p.altitudeDeg > 0.5`. When either condition fails, endMarker is removed/null. `renderOverlay()` checks `!endMarker` (null check) instead of display style. `renderOverlay()` also checks `totalH > 0.01` directly when computing `casterTopScreen`.
+
+#### Drop line doesn't track arc dot when caster/floor slider moves (`js/layers/sun-path.js`)
+Root cause: `updateAllOffsets()` repositions arc marker DOM elements but doesn't update any MapLibre GL source, so no `map render` event fires. `renderDropLine()` only runs on `map render`. Result: the drop line SVG stayed at its old position until the user did something else (moved the time slider, panned, etc.).
+
+Fix: added `renderDropLine()` call at the end of `updateAllOffsets()`. Now the drop line syncs immediately whenever arc offsets change, including slider moves.
+
+### Cache bump
+- `v34` → `v35`.
+
+---
+
 ### Known limitations and open work
 
 - **AR coordinate frame calibration:** The HFOV is hardcoded at 68° which is close but may drift on different phones. The "Align" button corrects azimuth but not elevation.

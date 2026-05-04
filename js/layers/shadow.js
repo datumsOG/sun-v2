@@ -124,6 +124,7 @@ function update() {
     : getPosition(datetime, observer.lat, observer.lon);
 
   const { lat, lon } = observer;
+  const totalH = FLOOR_H_M + OBJECT_H_M;
 
   // White ground dot — always at true ground, no pixel offset.
   if (!groundDot) {
@@ -157,14 +158,13 @@ function update() {
   }
   casterMarker.setLngLat([lon, lat]);
 
-  // Shadow ground endpoint — distance uses total height above ground.
-  if (p.altitudeDeg > 0.5) {
+  // Shadow endpoint — only created when there is actual height and the body is up.
+  // Null-checked in renderOverlay (no inline display toggling).
+  if (p.altitudeDeg > 0.5 && totalH > 0.01) {
     const tanEl = Math.tan(p.altitudeDeg * Math.PI / 180);
-    const totalH = FLOOR_H_M + OBJECT_H_M;
-    const flatKm = Math.min(totalH > 0 ? (totalH / tanEl) / 1000 : 0, MAX_SHADOW_KM);
+    const flatKm = Math.min((totalH / tanEl) / 1000, MAX_SHADOW_KM);
     const shadowAz = (p.azimuthDeg + 180) % 360;
     const endLngLat = destination(lat, lon, shadowAz, flatKm);
-
     if (!endMarker) {
       const e = document.createElement('div');
       e.className = 'shadow-end';
@@ -173,7 +173,6 @@ function update() {
       endMarker.setLngLat(endLngLat);
     }
     endMarker.getElement().style.background = colour;
-    endMarker.getElement().style.display = totalH > 0 ? '' : 'none';
   } else {
     if (endMarker) { endMarker.remove(); endMarker = null; }
   }
@@ -183,6 +182,8 @@ function update() {
 
 function renderOverlay() {
   if (!visible || !svgOverlay || !mapRef || !observerCache) return;
+
+  const totalH = FLOOR_H_M + OBJECT_H_M;
   const colour = mode === 'moon' ? '#d0d8e8' : '#ffb845';
   lineSky.setAttribute('stroke', colour);
 
@@ -190,25 +191,21 @@ function renderOverlay() {
   const floorScreen = FLOOR_H_M > 0.01
     ? project3D(mapRef, observerCache.lon, observerCache.lat, FLOOR_H_M)
     : groundScreen;
-  const casterTopScreen = project3D(mapRef, observerCache.lon, observerCache.lat, FLOOR_H_M + OBJECT_H_M);
+  const casterTopScreen = totalH > 0.01
+    ? project3D(mapRef, observerCache.lon, observerCache.lat, totalH)
+    : groundScreen;
 
-  // Floor dot: offset from ground marker position to floor height.
+  // Floor dot: lifted to floor height.
   if (floorDot) {
-    floorDot.setOffset([
-      floorScreen.x - groundScreen.x,
-      floorScreen.y - groundScreen.y,
-    ]);
+    floorDot.setOffset([floorScreen.x - groundScreen.x, floorScreen.y - groundScreen.y]);
   }
 
-  // Caster sphere: offset to floor + caster height.
+  // Caster sphere: lifted to floor + caster height.
   if (casterMarker) {
-    casterMarker.setOffset([
-      casterTopScreen.x - groundScreen.x,
-      casterTopScreen.y - groundScreen.y,
-    ]);
+    casterMarker.setOffset([casterTopScreen.x - groundScreen.x, casterTopScreen.y - groundScreen.y]);
   }
 
-  // Green line: ground → floor (only when floor > 0).
+  // Green line: ground → floor.
   if (FLOOR_H_M > 0.01) {
     lineFloor.setAttribute('x1', groundScreen.x); lineFloor.setAttribute('y1', groundScreen.y);
     lineFloor.setAttribute('x2', floorScreen.x);  lineFloor.setAttribute('y2', floorScreen.y);
@@ -217,13 +214,19 @@ function renderOverlay() {
     lineFloor.setAttribute('opacity', '0');
   }
 
-  // Blue pole: floor → caster top (only when caster > 0).
+  // Blue pole: floor → caster top.
   linePole.setAttribute('x1', floorScreen.x); linePole.setAttribute('y1', floorScreen.y);
   linePole.setAttribute('x2', casterTopScreen.x); linePole.setAttribute('y2', casterTopScreen.y);
   linePole.setAttribute('opacity', OBJECT_H_M > 0.01 ? '0.85' : '0');
 
+  // Sky line + shadow endpoint: only when totalH > 0 and body is up.
+  // endMarker existence already encodes both conditions (see update()).
+  if (!endMarker) {
+    lineSky.setAttribute('opacity', '0');
+    return;
+  }
   const body = getLiveBodyAnchor();
-  if (!body || !endMarker || endMarker.getElement().style.display === 'none') {
+  if (!body) {
     lineSky.setAttribute('opacity', '0');
     return;
   }

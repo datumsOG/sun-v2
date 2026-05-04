@@ -146,6 +146,8 @@ function updateAllOffsets() {
   if (liveMarker && liveSample) {
     liveMarker.setOffset(offsetForSample(liveSample));
   }
+  // Slider changes don't trigger a map render event, so sync the drop line now.
+  renderDropLine();
 }
 
 function refreshArcGeometry() {
