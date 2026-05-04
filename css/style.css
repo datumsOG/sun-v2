@@ -312,15 +312,9 @@ body.mode-moon #body-toggle { color: var(--moonblue); }
 /* Shadow elevation panel — always visible; dimmed when shadow mode is off */
 #shadow-elev-panel {
   margin-top: 8px;
-  padding: 6px 10px;
-  background: var(--shadow-soft);
-  border: 1px solid rgba(61, 90, 173, 0.4);
-  border-radius: 10px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 13px;
-  color: #ffffff;
+  gap: 6px;
   transition: opacity 200ms ease;
 }
 #shadow-elev-panel.disabled {
@@ -331,6 +325,12 @@ body.mode-moon #body-toggle { color: var(--moonblue); }
   display: flex;
   align-items: center;
   gap: 10px;
+  padding: 10px 12px;
+  background: var(--shadow-soft);
+  border: 1px solid rgba(61, 90, 173, 0.4);
+  border-radius: 10px;
+  font-size: 13px;
+  color: #ffffff;
 }
 .elev-row label { font-weight: 600; white-space: nowrap; color: #ffffff; min-width: 42px; }
 .elev-row input[type=range] { flex: 1; height: 4px; }
