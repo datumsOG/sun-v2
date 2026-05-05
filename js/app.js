@@ -68,6 +68,12 @@ function sliderToHeight(v) {
   const t = Math.min(1, n / 1000);
   return Math.max(1, Math.round(Math.pow(1000, t)));
 }
+// Inverse: metres → slider value (for syncing the number input back to the slider).
+function heightToSlider(h) {
+  if (h <= 0) return 0;
+  const clamped = Math.max(1, Math.min(1000, h));
+  return Math.max(1, Math.min(1000, Math.round(1000 * Math.log(clamped) / Math.log(1000))));
+}
 // Map slider value 0..1000 to radius 0.02..50 km on a log curve.
 function sliderToRadiusKm(v) {
   const t = Math.max(0, Math.min(1, +v / 1000));
@@ -191,29 +197,53 @@ async function main() {
     }
   });
 
+  // Slider → updates number input + height
   dom.shadowElev.addEventListener('input', () => {
     const h = sliderToHeight(dom.shadowElev.value);
     setShadowHeight(h);
-    dom.shadowElevVal.textContent = `${h} m`;
+    if (dom.shadowElevVal) dom.shadowElevVal.value = String(h);
     const s = store.get();
     if (s.shadowEnabled) updateShadow(map, s.observer, s.datetime, s.mode === 'moon');
     saveUI();
   });
+  // Number input → updates slider + height (fires on blur / Enter)
+  if (dom.shadowElevVal) {
+    dom.shadowElevVal.addEventListener('change', () => {
+      const h = Math.max(0, Math.min(1000, Math.round(+dom.shadowElevVal.value) || 0));
+      dom.shadowElevVal.value = String(h);
+      dom.shadowElev.value = String(heightToSlider(h));
+      setShadowHeight(h);
+      const s = store.get();
+      if (s.shadowEnabled) updateShadow(map, s.observer, s.datetime, s.mode === 'moon');
+      saveUI();
+    });
+  }
   // Initialise from default slider value
   setShadowHeight(sliderToHeight(dom.shadowElev.value));
-  dom.shadowElevVal.textContent = `${sliderToHeight(dom.shadowElev.value)} m`;
+  if (dom.shadowElevVal) dom.shadowElevVal.value = String(sliderToHeight(dom.shadowElev.value));
 
   if (dom.floorElev) {
     dom.floorElev.addEventListener('input', () => {
       const h = sliderToHeight(dom.floorElev.value);
       setFloorHeight(h);
-      dom.floorElevVal.textContent = `${h} m`;
+      if (dom.floorElevVal) dom.floorElevVal.value = String(h);
       const s = store.get();
       if (s.shadowEnabled) updateShadow(map, s.observer, s.datetime, s.mode === 'moon');
       saveUI();
     });
+    if (dom.floorElevVal) {
+      dom.floorElevVal.addEventListener('change', () => {
+        const h = Math.max(0, Math.min(1000, Math.round(+dom.floorElevVal.value) || 0));
+        dom.floorElevVal.value = String(h);
+        dom.floorElev.value = String(heightToSlider(h));
+        setFloorHeight(h);
+        const s = store.get();
+        if (s.shadowEnabled) updateShadow(map, s.observer, s.datetime, s.mode === 'moon');
+        saveUI();
+      });
+    }
     setFloorHeight(sliderToHeight(dom.floorElev.value));
-    dom.floorElevVal.textContent = `${sliderToHeight(dom.floorElev.value)} m`;
+    if (dom.floorElevVal) dom.floorElevVal.value = String(sliderToHeight(dom.floorElev.value));
   }
 
   // Vertical sliders (right edge)
@@ -533,13 +563,13 @@ function restoreUI(mapInstance) {
     dom.shadowElev.value = saved.casterH;
     const h = sliderToHeight(saved.casterH);
     setShadowHeight(h);
-    if (dom.shadowElevVal) dom.shadowElevVal.textContent = `${h} m`;
+    if (dom.shadowElevVal) dom.shadowElevVal.value = String(h);
   }
   if (saved.floorH != null && dom.floorElev) {
     dom.floorElev.value = saved.floorH;
     const h = sliderToHeight(saved.floorH);
     setFloorHeight(h);
-    if (dom.floorElevVal) dom.floorElevVal.textContent = `${h} m`;
+    if (dom.floorElevVal) dom.floorElevVal.value = String(h);
   }
   if (saved.tilt != null && dom.tiltSlider) {
     dom.tiltSlider.value = saved.tilt;

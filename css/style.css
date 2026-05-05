@@ -334,7 +334,30 @@ body.mode-moon #body-toggle { color: var(--moonblue); }
 }
 .elev-row label { font-weight: 600; white-space: nowrap; color: #ffffff; min-width: 42px; }
 .elev-row input[type=range] { flex: 1; height: 4px; }
-.elev-row span { font-variant-numeric: tabular-nums; min-width: 56px; text-align: right; color: #ffffff; }
+/* Tap-to-edit exact value input */
+.elev-num {
+  width: 48px;
+  text-align: right;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid rgba(255,255,255,0.22);
+  border-radius: 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: #ffffff;
+  padding: 2px 2px;
+  -moz-appearance: textfield;
+}
+.elev-num::-webkit-inner-spin-button,
+.elev-num::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.elev-num:focus {
+  outline: none;
+  border-bottom-color: rgba(77,210,255,0.8);
+}
+.elev-unit {
+  font-size: 13px;
+  color: rgba(255,255,255,0.55);
+}
 
 /* ===== Vertical sliders (right edge) =====
    Custom thin off-white tracks with a small flat thumb.

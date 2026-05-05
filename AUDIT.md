@@ -734,3 +734,42 @@ Old model: `totalH = FLOOR_H_M + OBJECT_H_M`. Raising floor raised the caster ab
 - `sw.js` — cache bumped `v37` → `v38`
 - `index.html` — asset strings bumped to `?v=38`
 
+---
+
+## Part 11 — Tap-to-edit height inputs (2026-05-05)
+
+### Change
+The `<span>` value displays in the Caster and Floor rows were replaced with `<input type="number">` fields. This gives two interaction modes on each row:
+
+- **Slider** (coarse): drag to sweep the value; number field updates in sync.
+- **Number field** (precise): tap the displayed number, type an exact metre value (0–1000), press Enter or blur. The slider snaps to the nearest representable position via the inverse log formula (`heightToSlider`).
+
+### Implementation
+- `index.html`: `<span id="shadow-elev-val">` → `<input class="elev-num" type="number" inputmode="numeric">` + `<span class="elev-unit">m</span>`. Same for `floor-elev-val`.
+- `css/style.css`: `.elev-num` — borderless, transparent background, underline border that highlights cyan on focus; spinner buttons hidden. `.elev-unit` — dimmed "m" label.
+- `js/app.js`:
+  - `heightToSlider(h)`: inverse of `sliderToHeight` — `max(1, round(1000 * ln(h) / ln(1000)))`. Used to snap the slider when the user types a value.
+  - Slider `input` handlers: now set `dom.*ElevVal.value` (was `.textContent`).
+  - Number input `change` handlers: clamp 0–1000, call `setHeight`, snap slider, call `saveUI`.
+  - `restoreUI`: switched from `.textContent` to `.value` assignments.
+- `sw.js` / `index.html`: bumped to `v39`.
+
+### Files changed
+- `index.html` — replaced spans with number inputs
+- `css/style.css` — `.elev-num` and `.elev-unit` rules
+- `js/app.js` — `heightToSlider`, updated handlers, `change` event listeners
+- `sw.js` — `v38` → `v39`
+
+---
+
+## Session summary (2026-05-05 full session)
+
+Versions v36 through v39 were produced in this session. Key changes in order:
+
+| v | What |
+|---|------|
+| v36 | Polyline fix: sky line forced through caster sphere via explicit body→caster→shadow waypoints |
+| v37 | Error monitoring (`js/monitor.js`): localStorage ring buffer, Sentry hook; crash hardening in `arrow-view.js`, `shadow.js`, `sun-path.js` |
+| v38 | Shadow geometry redesign: caster fixed at OBJECT_H_M, floor surface at FLOOR_H_M, shadow hidden when too long, green ground-ref indicator. UI persistence (sliders to localStorage). AR shadow updated to match. |
+| v39 | Tap-to-edit number inputs for Caster and Floor height rows. |
+
