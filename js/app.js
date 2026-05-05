@@ -197,6 +197,7 @@ async function main() {
     dom.shadowElevVal.textContent = `${h} m`;
     const s = store.get();
     if (s.shadowEnabled) updateShadow(map, s.observer, s.datetime, s.mode === 'moon');
+    saveUI();
   });
   // Initialise from default slider value
   setShadowHeight(sliderToHeight(dom.shadowElev.value));
@@ -209,6 +210,7 @@ async function main() {
       dom.floorElevVal.textContent = `${h} m`;
       const s = store.get();
       if (s.shadowEnabled) updateShadow(map, s.observer, s.datetime, s.mode === 'moon');
+      saveUI();
     });
     setFloorHeight(sliderToHeight(dom.floorElev.value));
     dom.floorElevVal.textContent = `${sliderToHeight(dom.floorElev.value)} m`;
@@ -217,7 +219,8 @@ async function main() {
   // Vertical sliders (right edge)
   if (dom.tiltSlider) {
     dom.tiltSlider.addEventListener('input', () => {
-      map.setPitch(+dom.tiltSlider.value);   // instant — no stutter
+      map.setPitch(+dom.tiltSlider.value);
+      saveUI();
     });
   }
   if (dom.radiusSlider) {
@@ -230,7 +233,9 @@ async function main() {
       updateSunNow(map, s.observer, s.datetime, s.mode === 'moon' ? getMoonPos(s.datetime, s.observer.lat, s.observer.lon) : null);
       renderScrubberTicks(dom.scrubberTicks, t.rise, t.set, s.datetime);
     };
-    dom.radiusSlider.addEventListener('input', applyRadius);
+    // Restore persisted slider values before first applyRadius() so they take effect immediately.
+    restoreUI(map);
+    dom.radiusSlider.addEventListener('input', () => { applyRadius(); saveUI(); });
     applyRadius();
   }
   // Sync tilt slider when user drags the map
@@ -502,6 +507,49 @@ function showToast(msg) {
   dom.toast.hidden = false;
   if (toastTimer) clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { dom.toast.hidden = true; }, 2200);
+}
+
+// ── UI state persistence ─────────────────────────────────────────────────────
+// Saves slider positions to localStorage so a crash or close restores them.
+// Observer / datetime / mode are persisted by attachHashSync via the URL hash.
+
+function saveUI() {
+  try {
+    localStorage.setItem('sun_ui', JSON.stringify({
+      casterH: dom.shadowElev?.value,
+      floorH:  dom.floorElev?.value,
+      radius:  dom.radiusSlider?.value,
+      tilt:    dom.tiltSlider?.value,
+    }));
+  } catch {}
+}
+
+function restoreUI(mapInstance) {
+  let saved;
+  try { saved = JSON.parse(localStorage.getItem('sun_ui') || 'null'); } catch {}
+  if (!saved) return;
+
+  if (saved.casterH != null && dom.shadowElev) {
+    dom.shadowElev.value = saved.casterH;
+    const h = sliderToHeight(saved.casterH);
+    setShadowHeight(h);
+    if (dom.shadowElevVal) dom.shadowElevVal.textContent = `${h} m`;
+  }
+  if (saved.floorH != null && dom.floorElev) {
+    dom.floorElev.value = saved.floorH;
+    const h = sliderToHeight(saved.floorH);
+    setFloorHeight(h);
+    if (dom.floorElevVal) dom.floorElevVal.textContent = `${h} m`;
+  }
+  if (saved.tilt != null && dom.tiltSlider) {
+    dom.tiltSlider.value = saved.tilt;
+    try { mapInstance.setPitch(+saved.tilt); } catch {}
+  }
+  if (saved.radius != null && dom.radiusSlider) {
+    // Value is read directly by applyRadius() which runs immediately after restoreUI().
+    dom.radiusSlider.value = saved.radius;
+    setArcRadiusKm(sliderToRadiusKm(saved.radius));
+  }
 }
 
 // Global error trap → show in toast so crashes are visible on mobile.

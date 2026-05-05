@@ -10,7 +10,7 @@
 
 import { getPosition, getMoonPos, getMoonIllumination } from '../solar.js';
 import { getArcSamples } from '../layers/sun-path.js';
-import { getShadowHeight } from '../layers/shadow.js';
+import { getShadowHeight, getFloorHeight } from '../layers/shadow.js';
 
 // ── Orientation matrix math ──
 const id3 = () => [[1,0,0],[0,1,0],[0,0,1]];
@@ -382,21 +382,30 @@ function renderAR(W, H, halfVfovTan) {
     elArObs.style.display = 'none';
   }
 
-  // ---- Shadow ground end (in opposite-azimuth direction, at distance casterH/tan(el)) ----
+  // ---- Shadow ground end — matches map view geometry: shadow lands at floor height ----
+  // casterH is declared above (caster sphere section).
+  const floorH = getFloorHeight();
+  const shadowH = casterH - floorH; // only the portion above the floor casts a shadow
   let endP = null;
-  if (body.altitudeDeg > 0.5) {
+  if (body.altitudeDeg > 0.5 && shadowH > 0) {
     const tanEl = Math.tan(bEl);
-    const dist = Math.min(casterH / tanEl, 4000); // metres, cap 4 km
-    const shadowAz = (body.azimuthDeg + calibrationOffset + 180) % 360;
-    const shAzRad = shadowAz * Math.PI / 180;
-    const endWorld = [dist * Math.sin(shAzRad), dist * Math.cos(shAzRad), -EYE_HEIGHT_M];
-    endP = projectPoint(endWorld, W, H, halfVfovTan);
-    if (endP) {
-      elArShadowEnd.style.display = '';
-      elArShadowEnd.style.left = endP.x + 'px';
-      elArShadowEnd.style.top  = endP.y + 'px';
-      elArShadowEnd.style.background = colour;
+    const dist = shadowH / tanEl; // metres, uncapped
+    if (dist < 4000) {
+      const shadowAz = (body.azimuthDeg + calibrationOffset + 180) % 360;
+      const shAzRad = shadowAz * Math.PI / 180;
+      // End point at floor height above observer's feet.
+      const endWorld = [dist * Math.sin(shAzRad), dist * Math.cos(shAzRad), floorH - EYE_HEIGHT_M];
+      endP = projectPoint(endWorld, W, H, halfVfovTan);
+      if (endP) {
+        elArShadowEnd.style.display = '';
+        elArShadowEnd.style.left = endP.x + 'px';
+        elArShadowEnd.style.top  = endP.y + 'px';
+        elArShadowEnd.style.background = colour;
+      } else {
+        elArShadowEnd.style.display = 'none';
+      }
     } else {
+      // Shadow too long — hide, matching map view behaviour.
       elArShadowEnd.style.display = 'none';
     }
   } else {

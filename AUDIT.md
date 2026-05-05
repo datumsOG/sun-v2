@@ -687,3 +687,50 @@ Added a persistent error monitor and hardened the five most likely runtime crash
 - **Moon arc in moon mode**: `getArcSamples()` returns the arc built by the most recent `updateSunPathDay` call. If the user switches to moon mode before the first day-level recompute, the samples are from a prior sun arc. No crash, but AR dots would be misplaced briefly.
 - **`compassPitch` → `map.setPitch`**: Not wrapped in try/catch. If MapLibre rejects an out-of-range pitch value, this throws in the `subscribeAll` callback. Low probability but worth a future guard.
 
+---
+
+## Part 10 — Shadow geometry redesign + UI persistence (2026-05-05)
+
+### Changes
+
+#### 1) Shadow geometry redesign (`js/layers/shadow.js` — full rewrite of `update()` + `renderOverlay()`)
+
+**Problem 1: Sky line misalignment at low sun angles / high caster**
+The old code capped shadow distance at `MAX_SHADOW_KM = 4km`. When the shadow was longer than that, the capped endpoint was placed at the wrong lat/lon — meaning the sky line from body → caster → capped endpoint was geometrically invalid. The polyline FORCED it through the caster sphere visually, but the endpoint dot was in the wrong place, and the near-horizon case still looked broken because the line had to bend around the cap.
+
+**Fix:** Shadow is hidden entirely (endMarker removed, sky line hidden) when `flatKm >= MAX_SHADOW_KM`. No more capping to a misleading position. The geometry is either correct or absent.
+
+**Problem 2: Floor slider raised the caster and arc, not the shadow endpoint**
+Old model: `totalH = FLOOR_H_M + OBJECT_H_M`. Raising floor raised the caster above the white dot, and the shadow still landed on the ground. This was inverted from the intended meaning.
+
+**New model:**
+- Caster is always at `OBJECT_H_M` above the white ground dot. Changing floor does NOT move the caster.
+- The floor surface is a horizontal plane at `FLOOR_H_M` above ground. The shadow lands on this surface.
+- Effective shadow height = `shadowH = OBJECT_H_M − FLOOR_H_M` (only the portion of the caster above the floor casts a shadow onto it).
+- Shadow endpoint dot (orange) is elevated to `FLOOR_H_M` height above its ground lat/lon via `project3D`.
+- Green dot appears at ground level directly below the shadow endpoint (same lat/lon, no offset).
+- Green vertical line connects ground dot to elevated shadow endpoint.
+- If `FLOOR_H_M >= OBJECT_H_M`, no shadow exists (floor is at or above the caster) — shadow hidden.
+- `setAnchorLiftMetres(OBJECT_H_M)` — floor no longer contributes to arc lift. The arc/body stays centred on the caster top.
+
+**Sky line geometry:** body → caster (at `OBJECT_H_M`) → shadow endpoint (at `FLOOR_H_M`) are geometrically collinear (all on the same sun ray by construction), so the polyline looks straight.
+
+#### 2) AR shadow geometry (`js/ui/arrow-view.js`)
+- Import `getFloorHeight`.
+- Shadow distance now uses `shadowH = casterH − floorH` (matching map view).
+- Shadow endpoint placed at `floorH − EYE_HEIGHT_M` in world Z (elevated to floor height).
+- Shadow hidden when `dist >= 4000m`, matching map view's hide-instead-of-cap behaviour.
+
+#### 3) UI state persistence (`js/app.js`)
+- `saveUI()`: writes `{casterH, floorH, radius, tilt}` slider values to `localStorage['sun_ui']` on every input event.
+- `restoreUI(map)`: reads the saved values, sets slider elements, calls `setShadowHeight`, `setFloorHeight`, `setArcRadiusKm`, `map.setPitch` to apply them immediately.
+- `restoreUI()` is called just before `applyRadius()` so the restored radius is used in the initial arc render.
+- Observer / datetime / mode are already persisted via URL hash (`attachHashSync`).
+
+### Files changed
+- `js/layers/shadow.js` — full redesign of update() and renderOverlay(); revised header comment
+- `js/ui/arrow-view.js` — import getFloorHeight; updated AR shadow calc
+- `js/app.js` — saveUI/restoreUI functions; saveUI wired to all four slider inputs; restoreUI called on init
+- `sw.js` — cache bumped `v37` → `v38`
+- `index.html` — asset strings bumped to `?v=38`
+
