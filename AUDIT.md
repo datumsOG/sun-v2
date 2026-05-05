@@ -612,3 +612,78 @@ Changed `lineSky` from `<line>` to `<polyline>` with three explicit waypoints: b
 - `sw.js`: cache bumped `v35` → `v36`
 - `index.html`: asset query strings bumped `?v=35` → `?v=36`
 
+---
+
+## Part 9 — Stability + Error Monitoring (2026-05-05)
+
+### Summary
+Added a persistent error monitor and hardened the five most likely runtime crash points.
+
+---
+
+### 1) Error monitoring — `js/monitor.js` (new file)
+
+**What:** Lightweight error capture module. Captures full stack traces, app state snapshot (mode, view, observer, datetime, shadowEnabled), and `navigator.userAgent` into a `localStorage` ring buffer (last 50 entries).
+
+**How to access logs:**
+- Open browser DevTools console on any device.
+- Run: `window.__sunLog()` → returns array of error objects sorted oldest-first.
+- Run: `window.__sunClearLog()` → clears the buffer.
+
+**Sentry integration (optional, not yet enabled):**
+- See commented-out block in `index.html` for instructions.
+- Create a free project at sentry.io, uncomment the CDN script tag, and set `window.SENTRY_DSN`.
+- `monitor.js` auto-forwards to `Sentry.captureException()` when the SDK and DSN are both present.
+
+**Wired into `app.js`:**
+- `initMonitor(() => store.get())` called at the start of `main()` — captures global window errors and unhandled promise rejections from that point forward.
+- `captureError(e, { phase })` called in all three top-level catch blocks: `redraw`, `init-redraw`, and `main()`.
+
+---
+
+### 2) Top 5 crash fixes
+
+#### Crash 1 — `arrow-view.js:119-120`: `elCalibrate`/`elCapture` null dereference
+**Was:** `elCalibrate.addEventListener(...)` unconditionally — crashes if either button is missing from HTML, leaving the camera module partially initialised.
+**Fix:** Added null guards: `if (elCalibrate)` / `if (elCapture)` before both `addEventListener` calls.
+
+#### Crash 2 — `arrow-view.js:179-180`: `enableSensors()` null dereference
+**Was:** `elCalibrate.hidden = false` and `elCapture.hidden = false` with no null checks. Called inside `showCameraView()` on every camera-mode entry — crashes on iOS if either element is missing.
+**Fix:** Added `if (elCalibrate)` / `if (elCapture)` guards around both assignments.
+
+#### Crash 3 — `arrow-view.js`: `showCameraView`/`hideCameraView`/`startCamera`/`stopCamera` null dereference
+**Was:** `elView.hidden`, `elVideo.srcObject` used without null checks. If `initCameraView()` threw before these were set, subsequent camera-mode switches crash.
+**Fix:** Added `if (elView)` / `if (elVideo)` guards in all four functions.
+
+#### Crash 4 — `arrow-view.js:tick` + `renderAR`: partially initialised AR elements
+**Was:** `tick()` calls `elDisk.hidden` without checking `elDisk`. `renderAR()` accesses `elArCaster`, `arShadowLine`, `arPoleLine` etc with only an `!elArOverlay` guard — any of the child elements could be null if the overlay was missing during init.
+**Fix:** Added `!elDisk` guard at top of `tick()`. Added comprehensive entry guard to `renderAR()` checking all six AR elements.
+
+#### Crash 5 — `shadow.js`/`sun-path.js`: NaN propagation from `project3D`
+**Was:** `project3D()` can return non-finite `x`/`y` values at extreme zoom levels or when the camera transform is in an invalid state. These values were passed directly into `SVG.setAttribute` (producing `"NaN,NaN"` polyline strings) and `MapLibre.Marker.setOffset` (causing silent failures or downstream exceptions).
+**Fix:**
+- `shadow.js renderOverlay`: Added `isFinite` checks on `groundScreen`, `floorScreen`, `casterTopScreen`, `bodyScreen`, and `endPt` before any SVG attribute write. Returns early and hides affected elements instead of writing bad values.
+- `sun-path.js offsetForSample`: Returns `[0, 0]` when `dx`/`dy` are non-finite.
+- `sun-path.js renderDropLine`: Returns with opacity 0 when ground projection is non-finite.
+- Also added `isFinite(observer.lat/lon)` guard at top of `renderOverlay` to prevent projecting invalid coordinates.
+
+---
+
+### Files changed
+- `js/monitor.js` — new file
+- `js/app.js` — import + init monitor; `captureError` in 3 catch blocks; comments on toast handlers
+- `js/ui/arrow-view.js` — null guards on `elCalibrate`, `elCapture`, `elView`, `elVideo`, AR elements; `tick` early-exit on null `elDisk`; `calibrate` null guard
+- `js/layers/shadow.js` — `isFinite` guards throughout `renderOverlay`
+- `js/layers/sun-path.js` — `isFinite` guards in `offsetForSample` and `renderDropLine`
+- `sw.js` — cache bumped `v36` → `v37`
+- `index.html` — asset strings bumped to `?v=37`; Sentry CDN instructions added as comments
+
+---
+
+### Remaining known risks
+- **Observer coordinates from hash**: `share.js` parses lat/lon with `parseFloat` from the URL hash. If the hash is malformed, `observer.lat`/`lon` could be NaN. The `renderOverlay` guard now stops this from crashing the SVG layer, but the arc and reflection layers would also get NaN inputs. Worth adding validation in `share.js` / `attachHashSync` if hash-sharing is used in the wild.
+- **`captureFrame` canvas failure**: `out.getContext('2d')` can return null (e.g. too many canvases). Wrapped in try/catch so it won't crash, but the download silently fails.
+- **AR coordinate frame on Android**: `deviceorientationabsolute` is preferred but not universal. The fallback `deviceorientation` uses `360 - alpha` which is only a compass heading approximation and drifts on some devices. Not a crash, but produces incorrect AR alignment.
+- **Moon arc in moon mode**: `getArcSamples()` returns the arc built by the most recent `updateSunPathDay` call. If the user switches to moon mode before the first day-level recompute, the samples are from a prior sun arc. No crash, but AR dots would be misplaced briefly.
+- **`compassPitch` → `map.setPitch`**: Not wrapped in try/catch. If MapLibre rejects an out-of-range pitch value, this throws in the `subscribeAll` callback. Low probability but worth a future guard.
+

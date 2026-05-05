@@ -135,7 +135,9 @@ function offsetForSample(s) {
   const altM = liftMetresAtAltitude(s.altDeg);
   const ground = mapRef.project([s.lon, s.lat]);
   const elevated = project3D(mapRef, s.lon, s.lat, altM);
-  return [elevated.x - ground.x, elevated.y - ground.y];
+  const dx = elevated.x - ground.x;
+  const dy = elevated.y - ground.y;
+  return [Number.isFinite(dx) ? dx : 0, Number.isFinite(dy) ? dy : 0];
 }
 
 function updateAllOffsets() {
@@ -273,6 +275,10 @@ function renderDropLine() {
     return;
   }
   const ground = mapRef.project([liveSample.lon, liveSample.lat]);
+  if (!Number.isFinite(ground.x) || !Number.isFinite(ground.y)) {
+    dropLine.setAttribute('opacity', '0');
+    return;
+  }
   dropLine.setAttribute('x1', ground.x + offset[0]);
   dropLine.setAttribute('y1', ground.y + offset[1]);
   dropLine.setAttribute('x2', ground.x);

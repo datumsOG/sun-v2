@@ -116,13 +116,13 @@ export function initCameraView() {
   }
 
   if (elSensorBtn) elSensorBtn.addEventListener('click', enableSensors);
-  elCalibrate.addEventListener('click', calibrate);
-  elCapture.addEventListener('click', captureFrame);
+  if (elCalibrate) elCalibrate.addEventListener('click', calibrate);
+  if (elCapture)   elCapture.addEventListener('click', captureFrame);
 }
 
 export function showCameraView() {
   visible = true;
-  elView.hidden = false;
+  if (elView) elView.hidden = false;
   startCamera();
   // Auto-request sensors on entering camera view (we're already inside a user
   // gesture from the view toggle, so iOS will accept the permission prompt).
@@ -132,7 +132,7 @@ export function showCameraView() {
 
 export function hideCameraView() {
   visible = false;
-  elView.hidden = true;
+  if (elView) elView.hidden = true;
   stopCamera();
   if (animId) { cancelAnimationFrame(animId); animId = null; }
 }
@@ -144,7 +144,7 @@ export function updateCameraView(newDatetime, newObserver, newMoonMode = false) 
 }
 
 async function startCamera() {
-  if (cameraOn) return;
+  if (cameraOn || !elVideo) return;
   try {
     videoStream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: { ideal: 'environment' } }, audio: false,
@@ -159,7 +159,7 @@ async function startCamera() {
 
 function stopCamera() {
   if (videoStream) { videoStream.getTracks().forEach(t => t.stop()); videoStream = null; }
-  elVideo.srcObject = null;
+  if (elVideo) elVideo.srcObject = null;
   cameraOn = false;
 }
 
@@ -176,8 +176,8 @@ async function enableSensors() {
       sensorsAttached = true;
     }
     if (elSensorBtn) elSensorBtn.hidden = true;
-    elCalibrate.hidden = false;
-    elCapture.hidden = false;
+    if (elCalibrate) elCalibrate.hidden = false;
+    if (elCapture)   elCapture.hidden = false;
   } catch {
     if (elSensorBtn) elSensorBtn.textContent = 'Sensors unavailable';
   }
@@ -219,7 +219,7 @@ function onOrient(e) {
 }
 
 function tick() {
-  if (!visible) return;
+  if (!visible || !elDisk) return;
   animId = requestAnimationFrame(tick);
 
   const body = moonMode
@@ -317,7 +317,7 @@ function extendRayToScreenEdge(p1, p2, W, H) {
 }
 
 function renderAR(W, H, halfVfovTan) {
-  if (!elArOverlay) return;
+  if (!elArOverlay || !elArCaster || !elArObs || !elArShadowEnd || !arShadowLine || !arPoleLine) return;
   const colour = moonMode ? '#d0d8e8' : '#ffb845';
 
   // ---- Arc dots (infinite distance, unit vectors) ----
@@ -470,8 +470,10 @@ function calibrate() {
     : getPosition(datetime, observer.lat, observer.lon);
   const currentHeading = headingSmoothed || 0;
   calibrationOffset = (body.azimuthDeg - currentHeading + 360) % 360;
-  elCalibrate.textContent = 'Aligned ✓';
-  setTimeout(() => { elCalibrate.textContent = 'Align'; }, 1500);
+  if (elCalibrate) {
+    elCalibrate.textContent = 'Aligned ✓';
+    setTimeout(() => { if (elCalibrate) elCalibrate.textContent = 'Align'; }, 1500);
+  }
 }
 
 function captureFrame() {

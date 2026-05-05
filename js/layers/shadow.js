@@ -185,6 +185,7 @@ function update() {
 
 function renderOverlay() {
   if (!visible || !svgOverlay || !mapRef || !observerCache) return;
+  if (!Number.isFinite(observerCache.lat) || !Number.isFinite(observerCache.lon)) return;
 
   const totalH = FLOOR_H_M + OBJECT_H_M;
   const colour = mode === 'moon' ? '#d0d8e8' : '#ffb845';
@@ -198,18 +199,25 @@ function renderOverlay() {
     ? project3D(mapRef, observerCache.lon, observerCache.lat, totalH)
     : groundScreen;
 
+  // Bail out if projection math produced non-finite results (e.g. extreme zoom).
+  if (!Number.isFinite(groundScreen.x) || !Number.isFinite(groundScreen.y)) return;
+
   // Floor dot: lifted to floor height.
   if (floorDot) {
-    floorDot.setOffset([floorScreen.x - groundScreen.x, floorScreen.y - groundScreen.y]);
+    const dx = floorScreen.x - groundScreen.x;
+    const dy = floorScreen.y - groundScreen.y;
+    floorDot.setOffset([Number.isFinite(dx) ? dx : 0, Number.isFinite(dy) ? dy : 0]);
   }
 
   // Caster sphere: lifted to floor + caster height.
   if (casterMarker) {
-    casterMarker.setOffset([casterTopScreen.x - groundScreen.x, casterTopScreen.y - groundScreen.y]);
+    const dx = casterTopScreen.x - groundScreen.x;
+    const dy = casterTopScreen.y - groundScreen.y;
+    casterMarker.setOffset([Number.isFinite(dx) ? dx : 0, Number.isFinite(dy) ? dy : 0]);
   }
 
   // Green line: ground → floor.
-  if (FLOOR_H_M > 0.01) {
+  if (FLOOR_H_M > 0.01 && Number.isFinite(floorScreen.x)) {
     lineFloor.setAttribute('x1', groundScreen.x); lineFloor.setAttribute('y1', groundScreen.y);
     lineFloor.setAttribute('x2', floorScreen.x);  lineFloor.setAttribute('y2', floorScreen.y);
     lineFloor.setAttribute('opacity', '0.85');
@@ -218,9 +226,13 @@ function renderOverlay() {
   }
 
   // Blue pole: floor → caster top.
-  linePole.setAttribute('x1', floorScreen.x); linePole.setAttribute('y1', floorScreen.y);
-  linePole.setAttribute('x2', casterTopScreen.x); linePole.setAttribute('y2', casterTopScreen.y);
-  linePole.setAttribute('opacity', OBJECT_H_M > 0.01 ? '0.85' : '0');
+  if (Number.isFinite(casterTopScreen.x)) {
+    linePole.setAttribute('x1', floorScreen.x); linePole.setAttribute('y1', floorScreen.y);
+    linePole.setAttribute('x2', casterTopScreen.x); linePole.setAttribute('y2', casterTopScreen.y);
+    linePole.setAttribute('opacity', OBJECT_H_M > 0.01 ? '0.85' : '0');
+  } else {
+    linePole.setAttribute('opacity', '0');
+  }
 
   // Sky line + shadow endpoint: only when totalH > 0 and body is up.
   // endMarker existence already encodes both conditions (see update()).
@@ -236,8 +248,16 @@ function renderOverlay() {
   const bodyScreen = mapRef.project([body.lon, body.lat]);
   const bx = bodyScreen.x + body.offsetPx[0];
   const by = bodyScreen.y + body.offsetPx[1];
+  if (!Number.isFinite(bx) || !Number.isFinite(by)) {
+    lineSky.setAttribute('opacity', '0');
+    return;
+  }
   const endLngLat = endMarker.getLngLat();
   const endPt = mapRef.project([endLngLat.lng, endLngLat.lat]);
+  if (!Number.isFinite(endPt.x) || !Number.isFinite(endPt.y)) {
+    lineSky.setAttribute('opacity', '0');
+    return;
+  }
 
   lineSky.setAttribute('points',
     `${bx},${by} ${casterTopScreen.x},${casterTopScreen.y} ${endPt.x},${endPt.y}`);

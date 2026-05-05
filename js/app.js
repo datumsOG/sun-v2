@@ -16,6 +16,7 @@ import { findNextAlignment } from './alignment.js';
 import { bearing, formatTime, formatDate, throttleRaf, startOfLocalDay } from './util.js';
 import { initCameraView, showCameraView, hideCameraView, updateCameraView } from './ui/arrow-view.js';
 import { checkAndNotify, saveReminder } from './reminders.js';
+import { initMonitor, captureError } from './monitor.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -75,6 +76,9 @@ function sliderToRadiusKm(v) {
 }
 
 async function main() {
+  // Init error monitor first so it captures everything that follows.
+  initMonitor(() => store.get());
+
   attachHashSync();
   // Always default to current time on open (overrides any t= in the hash).
   store.set({ datetime: new Date() });
@@ -274,7 +278,11 @@ async function main() {
   });
 
   store.subscribeAll(throttleRaf((s, changed) => {
-    try { redraw(s, changed); } catch (e) { console.error('redraw failed', e); showToast('Error: ' + e.message); }
+    try { redraw(s, changed); } catch (e) {
+      console.error('redraw failed', e);
+      captureError(e, { phase: 'redraw', changed });
+      showToast('Error: ' + e.message);
+    }
   }));
 
   // First draw
@@ -282,6 +290,7 @@ async function main() {
     redraw(store.get(), ['observer', 'datetime', 'mode', 'view', 'target', 'shadowEnabled', 'reflectionEnabled']);
   } catch (e) {
     console.error('Initial redraw failed:', e);
+    captureError(e, { phase: 'init-redraw' });
     showToast('Init error: ' + e.message);
   }
 
@@ -495,20 +504,20 @@ function showToast(msg) {
   toastTimer = setTimeout(() => { dom.toast.hidden = true; }, 2200);
 }
 
-// Global error trap → show in toast (so we can see what's broken on mobile)
+// Global error trap → show in toast so crashes are visible on mobile.
+// Logging to the persistent ring buffer is handled by initMonitor above.
 window.addEventListener('error', (e) => {
-  const msg = (e && e.message) || 'unknown error';
   const t = document.getElementById('toast');
-  if (t) { t.textContent = 'JS: ' + msg; t.hidden = false; }
+  if (t) { t.textContent = 'JS: ' + ((e && e.message) || 'unknown error'); t.hidden = false; }
 });
 window.addEventListener('unhandledrejection', (e) => {
-  const msg = (e.reason && (e.reason.message || e.reason.toString())) || 'rejection';
   const t = document.getElementById('toast');
-  if (t) { t.textContent = 'Promise: ' + msg; t.hidden = false; }
+  if (t) { t.textContent = 'Promise: ' + ((e.reason && (e.reason.message || e.reason.toString())) || 'rejection'); t.hidden = false; }
 });
 
 main().catch((e) => {
   console.error(e);
+  captureError(e, { phase: 'main' });
   const t = document.getElementById('toast');
   if (t) { t.textContent = 'main(): ' + e.message; t.hidden = false; }
   else document.body.insertAdjacentHTML('beforeend', `<div style="position:fixed;top:60px;left:10px;right:10px;padding:12px;background:#400;color:#fff;z-index:99;border-radius:8px;font:13px monospace;">main(): ${e.message}</div>`);
