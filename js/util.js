@@ -100,14 +100,11 @@ export function startOfLocalDay(d) {
 }
 
 /**
- * Project a 3D world point (lng, lat, altitude in METRES) to screen pixels.
+ * Project a 3D world point (lng, lat, altMeters above flat ground) to screen pixels.
  *
- * Strategy: work entirely in METRES. Find the camera's lng/lat and altitude,
- * convert both camera and body to local east/north metres around the body's
- * ground point, cast a ray from camera through the body to the z=0 plane,
- * convert the apparent ground point back to lng/lat, and project that with
- * map.project(). Final pixel comes from MapLibre's own projection on a ground
- * point, so perspective is correct by definition.
+ * Works entirely in metres on a flat reference plane (z=0 = visual ground).
+ * Does NOT query terrain elevation — terrain DEM is only used in shadow geometry
+ * calculations (shadow.js update()), not in the 60fps render path.
  */
 const EARTH_R_M = 6371008.8;
 const EARTH_CIRC_M = 2 * Math.PI * EARTH_R_M;
@@ -158,8 +155,7 @@ export function project3D(map, lng, lat, altMeters) {
   const camDx = (cam.lng - lng) * M_PER_DEG * cosLat;
   const camDy = (cam.lat - lat) * M_PER_DEG;
 
-  // Ray (cam) → (body at altMeters above body-ground = origin), continued to z=0:
-  // apparent_xy = camDxy * (1 - t) with t = camAltM / (camAltM - altMeters)
+  // Ray from camera through body (at altMeters above flat ground), continued to z=0.
   const tParam = cam.altM / (cam.altM - altMeters);
   const apX = camDx * (1 - tParam);
   const apY = camDy * (1 - tParam);

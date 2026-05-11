@@ -61,18 +61,31 @@ input { font-family: inherit; color: inherit; }
    live inside .maplibregl-canvas-container in MapLibre 4 and were being nuked
    by an over-broad `> *:not(canvas)` selector. */
 .maplibregl-ctrl-attrib,
-.maplibregl-ctrl-bottom-left,
 .maplibregl-ctrl-bottom-right,
 .maplibregl-ctrl-top-left,
-.maplibregl-ctrl-top-right,
-.maplibregl-control-container { display: none !important; }
-.maplibregl-canvas { outline: none !important; }
+.maplibregl-ctrl-top-right { display: none !important; }
+.maplibregl-canvas { outline: none !important; transition: opacity 0.55s ease; }
+/* Grid mode: fade tiles out, leave dark #map background + DOM markers visible */
+body.grid-mode .maplibregl-canvas { opacity: 0; }
+body.grid-mode .maplibregl-ctrl-bottom-left { display: none !important; }
+/* Scale bar: position it just above the dock */
+.maplibregl-ctrl-bottom-left {
+  bottom: calc(var(--safe-bottom) + 170px) !important;
+  left: 10px !important;
+}
+.maplibregl-ctrl-scale {
+  background: rgba(10,14,20,0.6) !important;
+  border-color: rgba(255,255,255,0.35) !important;
+  color: rgba(255,255,255,0.65) !important;
+  font-size: 10px !important;
+  line-height: 16px !important;
+  padding: 0 5px !important;
+  border-radius: 4px !important;
+  font-family: inherit !important;
+}
 /* Default theme: dark map, white labels (no canvas filter — actual fills brightened via setPaintProperty). */
 body.invert .maplibregl-canvas { filter: invert(1) hue-rotate(180deg); }
-body.invert .arc-dot,
-body.invert .caster-sphere,
-body.invert .shadow-end,
-body.invert #shadow-svg { filter: invert(1) hue-rotate(180deg); }
+/* Arc/shadow marker colors stay the same in both light and dark map modes. */
 
 .glass {
   background: var(--surface);
@@ -249,7 +262,7 @@ body.mode-moon #rise-label, body.mode-moon #set-label { color: var(--moonblue); 
 .ctlbtn {
   flex: 1;
   height: 46px;
-  min-width: 38px;
+  min-width: 32px; /* 11 buttons × 32 + 10 gaps × 6 = 412 px → fits 390 px phones */
   border-radius: 12px;
   background: rgba(255,255,255,0.06);
   color: var(--text);
@@ -268,18 +281,54 @@ body.mode-moon #rise-label, body.mode-moon #set-label { color: var(--moonblue); 
 .ctlbtn .ico { display: block; }
 .ctlbtn .ico.hide { display: none !important; }
 
-/* On/off toggle visual: filled when active */
+/* On/off toggle visual: gold for all toggles — consistent active state */
 .ctlbtn.toggle.active {
   background: var(--gold-soft);
   color: var(--gold);
   box-shadow: inset 0 0 0 1px rgba(255,184,69,0.4);
 }
-#compass-toggle.active   { background: rgba(120,200,255,0.18); color: #78c8ff; box-shadow: inset 0 0 0 1px rgba(120,200,255,0.4); }
-#shadow-toggle.active    { background: var(--shadow-soft); color: var(--shadow-clr); box-shadow: inset 0 0 0 1px rgba(61,90,173,0.5); }
-#reflection-toggle.active { background: var(--reflect-soft); color: var(--reflect); box-shadow: inset 0 0 0 1px rgba(77,210,255,0.4); }
 
-#body-toggle { color: var(--gold); }
-body.mode-moon #body-toggle { color: var(--moonblue); }
+/* Body toggle: dim when in sun mode (default); highlight moonblue when in moon mode */
+#body-toggle { color: var(--text-dim); }
+body.mode-moon #body-toggle {
+  background: var(--moonblue-soft);
+  color: var(--moonblue);
+  box-shadow: inset 0 0 0 1px rgba(208,216,232,0.4);
+}
+/* Invert button: highlight when inverted */
+body.invert #invert-btn {
+  background: var(--gold-soft);
+  color: var(--gold);
+  box-shadow: inset 0 0 0 1px rgba(255,184,69,0.4);
+}
+/* View toggle: highlight when in camera mode */
+body.view-camera #view-toggle {
+  background: var(--gold-soft);
+  color: var(--gold);
+  box-shadow: inset 0 0 0 1px rgba(255,184,69,0.4);
+}
+
+/* Unit toggle: floating pill in grid mode, top-left so it doesn't crowd the dock */
+#unit-toggle {
+  position: fixed;
+  top: calc(18px + var(--safe-top));
+  left: calc(10px + var(--safe-left));
+  z-index: 9;
+  display: none;
+  font-family: inherit;
+  font-size: 12px; font-weight: 600; letter-spacing: 0.02em;
+  color: rgba(255,255,255,0.85);
+  background: rgba(11,14,20,0.55);
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 999px;
+  padding: 7px 14px;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+body.grid-mode #unit-toggle { display: block; }
+body.view-camera #grid-toggle,
+body.view-camera #unit-toggle { display: none !important; }
 
 .ghostbtn {
   height: 26px;
@@ -325,7 +374,8 @@ body.mode-moon #body-toggle { color: var(--moonblue); }
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px;
+  padding: 0 12px;
+  min-height: 44px;
   background: var(--shadow-soft);
   border: 1px solid rgba(61, 90, 173, 0.4);
   border-radius: 10px;
@@ -333,7 +383,43 @@ body.mode-moon #body-toggle { color: var(--moonblue); }
   color: #ffffff;
 }
 .elev-row label { font-weight: 600; white-space: nowrap; color: #ffffff; min-width: 42px; }
-.elev-row input[type=range] { flex: 1; height: 4px; }
+.elev-row input[type=range] {
+  -webkit-appearance: none; appearance: none;
+  flex: 1; height: 24px;
+  background: transparent; outline: none; cursor: pointer;
+  margin: 0; padding: 0;
+  /* Prevent Chrome/Android from filling track left of thumb in blue */
+  accent-color: rgba(255,255,255,0.25);
+}
+.elev-row input[type=range]::-webkit-slider-runnable-track {
+  height: 4px; background: rgba(255,255,255,0.25); border-radius: 2px;
+}
+.elev-row input[type=range]::-moz-range-track {
+  height: 4px; background: rgba(255,255,255,0.25); border-radius: 2px;
+}
+/* Firefox filled portion matches track color → uniform appearance */
+.elev-row input[type=range]::-moz-range-progress {
+  height: 4px; background: rgba(255,255,255,0.25); border-radius: 2px;
+}
+.elev-row input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 38% 35%, #ffffff 0%, #c8d8e8 55%, #8aaccc 100%);
+  border: none;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.55);
+  cursor: pointer;
+  /* Center the thumb on the 4px track: (4px - 20px) / 2 = -8px */
+  margin-top: -8px;
+}
+.elev-row input[type=range]::-moz-range-thumb {
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 38% 35%, #ffffff 0%, #c8d8e8 55%, #8aaccc 100%);
+  border: none;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.55);
+  cursor: pointer;
+}
 /* Tap-to-edit exact value input */
 .elev-num {
   width: 48px;
@@ -364,11 +450,12 @@ body.mode-moon #body-toggle { color: var(--moonblue); }
    Implemented as a vertical-rotated input range. */
 .vslider {
   position: fixed;
-  right: 12px;
-  -webkit-appearance: slider-vertical;
-  appearance: slider-vertical;
-  writing-mode: bt-lr;
-  width: 22px;
+  right: 4px;
+  writing-mode: vertical-lr;
+  direction: rtl;
+  -webkit-appearance: none;
+  appearance: none;
+  width: 44px;
   z-index: 4;
   background: transparent;
   touch-action: none;
@@ -385,22 +472,25 @@ body.mode-moon #body-toggle { color: var(--moonblue); }
 }
 .vslider::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 28px; height: 12px;
-  border-radius: 4px;
-  background: #ffffff;
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 38% 35%, #ffffff 0%, #c8d8e8 55%, #8aaccc 100%);
   border: none;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.5);
-  margin-left: -13px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.55);
+  margin-left: -11.25px; /* precise: -(24-1.5)/2 */
+  margin-top: 0; /* Chrome/Windows: prevent default vertical offset */
 }
 .vslider::-moz-range-thumb {
-  width: 28px; height: 12px;
-  border-radius: 4px;
-  background: #ffffff;
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 38% 35%, #ffffff 0%, #c8d8e8 55%, #8aaccc 100%);
   border: none;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.55);
 }
-.vslider.tilt   { top: calc(10px + var(--safe-top)); height: calc(33vh - 30px); }
-/* Bottom slider stops above the dock so its thumb isn't hidden behind it */
-.vslider.radius { top: calc(33vh + 14px);            height: calc(67vh - 320px); }
+.vslider.tilt   { top: calc(10px + var(--safe-top)); height: calc(33vh - 44px); }
+/* Bottom slider: clear the dock + always-visible shadow panel (~265px total).
+   360px buffer ensures the slider thumb never overlaps the dock on any phone. */
+.vslider.radius { top: calc(33vh + 24px); height: calc(67vh - 360px - var(--safe-bottom)); min-height: 20px; }
 body.view-camera .vslider { display: none; }
 
 /* Hint banner */
@@ -609,6 +699,115 @@ body.mode-moon #body-disk-shadow { display: block; }
   border: 1px solid var(--border-strong);
 }
 
+/* Calibration crosshair: only visible in camera view */
+#cam-crosshair {
+  position: fixed;
+  left: 50%; top: 50%;
+  margin: -20px 0 0 -20px;
+  pointer-events: none;
+  z-index: 9;
+  display: none;
+  filter: drop-shadow(0 0 3px rgba(0,0,0,0.6));
+}
+body.view-camera #cam-crosshair { display: block; }
+
+/* FOV preset toggle (top of camera view) */
+#cam-fov-row {
+  position: fixed;
+  top: calc(18px + var(--safe-top));
+  left: 50%; transform: translateX(-50%);
+  z-index: 9;
+  display: none;
+  gap: 2px;
+  background: rgba(11,14,20,0.55);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 999px;
+  padding: 3px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+body.view-camera #cam-fov-row { display: flex; }
+.cam-fov-btn {
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: rgba(255,255,255,0.65);
+  background: transparent;
+  border: 0;
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.cam-fov-btn.active {
+  background: rgba(255,255,255,0.18);
+  color: #fff;
+}
+
 /* When in camera view, dock simplifies */
 body.view-camera #scrubber-wrap,
 body.view-camera #time-row { /* keep visible */ }
+
+/* ===== Coord labels (DATA mode) ===== */
+.coord-label {
+  position: fixed;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255,255,255,0.9);
+  background: rgba(11,14,20,0.72);
+  border-radius: 5px;
+  padding: 3px 6px;
+  pointer-events: none;
+  z-index: 10;
+  white-space: nowrap;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border: 1px solid rgba(255,255,255,0.1);
+}
+
+/* ===== Alignment wizard — floats at top of screen ===== */
+#align-panel {
+  position: fixed;
+  top: calc(12px + var(--safe-top));
+  left: calc(6px + var(--safe-left));
+  right: calc(6px + var(--safe-right));
+  max-width: 540px;
+  margin: 0 auto;
+  z-index: 8;
+  padding: 14px 14px 12px;
+}
+.align-close-btn {
+  position: absolute; top: 10px; right: 12px;
+  font-size: 20px; line-height: 1; color: var(--text-dim); cursor: pointer; background: none; border: 0;
+}
+.data-action-btn {
+  width: 100%; height: 38px;
+  border-radius: 10px;
+  font-size: 13px; font-weight: 600;
+  background: var(--gold-soft);
+  color: var(--gold);
+  border: 1px solid rgba(255,184,69,0.35);
+  cursor: pointer; font-family: inherit;
+}
+.data-action-btn:disabled { opacity: 0.35; pointer-events: none; }
+.align-label { font-size: 10px; font-weight: 700; letter-spacing: 0.05em; color: var(--text-dim); text-transform: uppercase; margin-bottom: 4px; }
+.align-coords { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text); margin-bottom: 8px; min-height: 18px; }
+.align-ht-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; }
+.align-ht-row label { color: var(--text-dim); min-width: 44px; font-family: inherit; }
+.align-ht-row input { width: 70px; background: rgba(255,255,255,0.08); border: 1px solid var(--border-strong); border-radius: 7px; padding: 5px 8px; font-size: 13px; color: var(--text); text-align: right; -moz-appearance: textfield; font-family: inherit; }
+.align-ht-row input::-webkit-inner-spin-button, .align-ht-row input::-webkit-outer-spin-button { -webkit-appearance: none; }
+.align-ht-row span { color: var(--text-dim); font-size: 13px; }
+.align-hint { font-size: 11px; color: var(--text-faint); margin: 0 0 8px; }
+
+/* Coloured dot markers used in alignment wizard labels */
+.dot-a {
+  display: inline-block; width: 10px; height: 10px;
+  border-radius: 50%; background: var(--reflect); /* caster blue */
+  vertical-align: middle; margin: 0 3px;
+}
+.dot-b {
+  display: inline-block; width: 10px; height: 10px;
+  border-radius: 50%; background: var(--gold); /* shadow endpoint gold */
+  vertical-align: middle; margin: 0 3px;
+}

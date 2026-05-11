@@ -1,6 +1,8 @@
 // MapLibre setup using OpenFreeMap (no API key, no signup).
+// Terrain elevation uses AWS Terrain Tiles (Terrarium format, public, no key).
 
 const STYLE_URL = 'https://tiles.openfreemap.org/styles/dark';
+const TERRAIN_TILES = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
 
 export function initMap(container, center) {
   const map = new maplibregl.Map({
@@ -13,6 +15,7 @@ export function initMap(container, center) {
     dragRotate: true,
     pitchWithRotate: true,
     maxPitch: 75,
+    maxZoom: 24, // allows ~4 m view in grid mode
   });
   if (map.touchPitch && typeof map.touchPitch.enable === 'function') {
     try { map.touchPitch.enable(); } catch {}
@@ -35,6 +38,29 @@ function brightenLabels(map) {
       try { map.setPaintProperty(layer.id, 'text-halo-width', 1.4); } catch {}
     }
   } catch {}
+}
+
+/**
+ * Add Terrarium DEM source for elevation queries.
+ * exaggeration:0 keeps the map visually flat so SVG overlays stay aligned,
+ * while still allowing queryTerrainElevation() for terrain-aware shadows.
+ * Safe to call multiple times; no-op if terrain already set.
+ */
+export function addTerrain(map) {
+  try {
+    if (!map.getSource('terrain-dem')) {
+      map.addSource('terrain-dem', {
+        type: 'raster-dem',
+        tiles: [TERRAIN_TILES],
+        tileSize: 256,
+        encoding: 'terrarium',
+        maxzoom: 14,
+      });
+    }
+    map.setTerrain({ source: 'terrain-dem', exaggeration: 0 });
+  } catch (e) {
+    console.warn('terrain setup failed', e);
+  }
 }
 
 export function whenStyleReady(map) {

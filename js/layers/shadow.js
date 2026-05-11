@@ -11,13 +11,10 @@
 //   • Green vertical line from green dot up to shadow endpoint.
 //   • Body-coloured sky line from sun/moon body → caster → shadow endpoint.
 //
-// Shadow geometry:
-//   The caster casts a shadow onto a horizontal surface (the "floor") at
-//   FLOOR_H_M above ground. The effective height that produces the shadow is
-//   shadowH = OBJECT_H_M − FLOOR_H_M (only the portion of the caster above the
-//   floor contributes). If floor ≥ caster, or the shadow distance exceeds
-//   MAX_SHADOW_KM, or the body is below 0.5°, the shadow is hidden entirely
-//   rather than showing a misleading capped or geometrically invalid position.
+// Shadow geometry (flat-earth):
+//   flatKm = shadowH / tan(altitude) / 1000
+//   If floor ≥ caster (parallel-rays mode), the intersection is on the sun-side.
+//   MAX_SHADOW_KM and alt > 0.5° guards prevent misleading geometry.
 //
 // All lines are drawn in a single full-screen SVG overlay that re-renders on
 // every map render frame so geometry stays glued to the map.
@@ -25,6 +22,7 @@
 import { getPosition, getMoonPos } from '../solar.js';
 import { destination, project3D } from '../util.js';
 import { getLiveBodyAnchor, setAnchorLiftMetres } from './sun-path.js';
+import { getElevationSync, prefetchElevation, setElevationCallback } from '../elevation.js';
 
 let OBJECT_H_M = 0;   // caster height above ground
 let FLOOR_H_M = 0;    // floor surface elevation above ground (shadow lands here)
@@ -53,6 +51,16 @@ export function setShadowHeight(h) {
   }
 }
 export function getShadowHeight() { return OBJECT_H_M; }
+export function getShadowEndLngLat() {
+  if (!endMarker) return null;
+  const ll = endMarker.getLngLat();
+  return { lat: ll.lat, lon: ll.lng };
+}
+export function getFloorDotLngLat() {
+  if (!floorDot) return null;
+  const ll = floorDot.getLngLat();
+  return { lat: ll.lat, lon: ll.lng };
+}
 
 export function setFloorHeight(h) {
   const n = Number(h);
@@ -67,6 +75,7 @@ export function getFloorHeight() { return FLOOR_H_M; }
 export function addShadowLayer(map) {
   mapRef = map;
   if (svgOverlay) return;
+  setElevationCallback(() => { if (visible) update(); });
 
   svgOverlay = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svgOverlay.id = 'shadow-svg';
@@ -165,11 +174,26 @@ function update() {
 
   if (shadowH > 0.01 && p.altitudeDeg > 0.5) {
     const tanEl = Math.tan(p.altitudeDeg * Math.PI / 180);
-    const flatKm = shadowH / tanEl / 1000;
+    const shadowAz = (p.azimuthDeg + 180) % 360;
+    const obsElev = getElevationSync(lon, lat);
+    let flatKm = shadowH / tanEl / 1000;
+    for (let iter = 0; iter < 4; iter++) {
+      const cand = destination(lat, lon, shadowAz, flatKm);
+      const endElev = getElevationSync(cand[0], cand[1]);
+      const effH = (obsElev + OBJECT_H_M) - (endElev + FLOOR_H_M);
+      if (effH < 0.01) { flatKm = 0; break; }
+      const next = effH / tanEl / 1000;
+      if (Math.abs(next - flatKm) < 0.001) { flatKm = next; break; }
+      flatKm = next;
+    }
+    prefetchElevation(lon, lat);
+    if (flatKm > 0) {
+      const approxEnd = destination(lat, lon, shadowAz, flatKm);
+      prefetchElevation(approxEnd[0], approxEnd[1]);
+    }
 
-    if (flatKm < MAX_SHADOW_KM) {
+    if (flatKm > 0 && flatKm < MAX_SHADOW_KM) {
       // Shadow reaches the floor within the useful range — show it.
-      const shadowAz = (p.azimuthDeg + 180) % 360;
       const endLngLat = destination(lat, lon, shadowAz, flatKm);
 
       // Shadow endpoint dot — elevated to FLOOR_H_M by renderOverlay.
@@ -202,8 +226,50 @@ function update() {
       if (endMarker) { endMarker.remove(); endMarker = null; }
       if (floorDot)  { floorDot.remove();  floorDot = null; }
     }
+  } else if (FLOOR_H_M > OBJECT_H_M + 0.01 && p.altitudeDeg > 0.5) {
+    // Parallel-rays mode: floor above caster.
+    // Sun ray toward sun; terrain-corrected intersection at floor height.
+    const tanEl2 = Math.tan(p.altitudeDeg * Math.PI / 180);
+    const obsElev2 = getElevationSync(lon, lat);
+    let flatKm2 = (FLOOR_H_M - OBJECT_H_M) / tanEl2 / 1000;
+    for (let iter = 0; iter < 4; iter++) {
+      const cand = destination(lat, lon, p.azimuthDeg, flatKm2);
+      const intElev = getElevationSync(cand[0], cand[1]);
+      const heightToReach = (intElev + FLOOR_H_M) - (obsElev2 + OBJECT_H_M);
+      if (heightToReach < 0.01) { flatKm2 = 0; break; }
+      const next = heightToReach / tanEl2 / 1000;
+      if (Math.abs(next - flatKm2) < 0.001) { flatKm2 = next; break; }
+      flatKm2 = next;
+    }
+    prefetchElevation(lon, lat);
+    if (flatKm2 > 0) {
+      const approxEnd = destination(lat, lon, p.azimuthDeg, flatKm2);
+      prefetchElevation(approxEnd[0], approxEnd[1]);
+    }
+
+    if (flatKm2 > 0 && flatKm2 < MAX_SHADOW_KM) {
+      const intLngLat = destination(lat, lon, p.azimuthDeg, flatKm2);
+      if (!endMarker) {
+        const e = document.createElement('div');
+        e.className = 'shadow-end';
+        endMarker = new maplibregl.Marker({ element: e }).setLngLat(intLngLat).addTo(mapRef);
+      } else {
+        endMarker.setLngLat(intLngLat);
+      }
+      endMarker.getElement().style.background = colour;
+      if (!floorDot) {
+        const dot = document.createElement('div');
+        dot.style.cssText = `width:12px;height:12px;border-radius:50%;background:${FLOOR_COLOR};box-shadow:0 0 6px rgba(77,255,154,0.55);pointer-events:none;`;
+        floorDot = new maplibregl.Marker({ element: dot, offset: [0, 0] }).setLngLat(intLngLat).addTo(mapRef);
+      } else {
+        floorDot.setLngLat(intLngLat);
+      }
+    } else {
+      if (endMarker) { endMarker.remove(); endMarker = null; }
+      if (floorDot)  { floorDot.remove();  floorDot = null; }
+    }
   } else {
-    // Body below horizon, or floor is at/above caster level — no shadow possible.
+    // Body below horizon, or floor ≈ caster level, or both at zero.
     if (endMarker) { endMarker.remove(); endMarker = null; }
     if (floorDot)  { floorDot.remove();  floorDot = null; }
   }
@@ -243,8 +309,16 @@ function renderOverlay() {
   }
 
   if (!endMarker) {
-    lineSky.setAttribute('opacity', '0');
     lineFloor.setAttribute('opacity', '0');
+    // No shadow endpoint — still draw body→caster (or body→ground) ray when
+    // the body is above the horizon so the light-ray line is always visible.
+    const body0 = getLiveBodyAnchor();
+    if (!body0) { lineSky.setAttribute('opacity', '0'); return; }
+    const bs0 = mapRef.project([body0.lon, body0.lat]);
+    const bx0 = bs0.x + body0.offsetPx[0], by0 = bs0.y + body0.offsetPx[1];
+    if (!Number.isFinite(bx0) || !Number.isFinite(by0)) { lineSky.setAttribute('opacity', '0'); return; }
+    lineSky.setAttribute('points', `${bx0},${by0} ${casterTopScreen.x},${casterTopScreen.y}`);
+    lineSky.setAttribute('opacity', '0.95');
     return;
   }
   const body = getLiveBodyAnchor();
@@ -292,9 +366,16 @@ function renderOverlay() {
     lineFloor.setAttribute('opacity', '0');
   }
 
-  // Sky line: body → caster top (OBJECT_H_M) → shadow endpoint (FLOOR_H_M).
-  // These three points are geometrically collinear (all on the same sun ray).
-  lineSky.setAttribute('points',
-    `${bx},${by} ${casterTopScreen.x},${casterTopScreen.y} ${endScreenPt.x},${endScreenPt.y}`);
+  // Sky line: 3-point polyline along the sun ray.
+  // Normal: body → caster → shadow endpoint (anti-sun direction).
+  // Parallel-rays: body → floor-intersection → caster (sun direction; floor > caster).
+  const parallelMode = FLOOR_H_M > OBJECT_H_M + 0.01;
+  if (parallelMode) {
+    lineSky.setAttribute('points',
+      `${bx},${by} ${endScreenPt.x},${endScreenPt.y} ${casterTopScreen.x},${casterTopScreen.y}`);
+  } else {
+    lineSky.setAttribute('points',
+      `${bx},${by} ${casterTopScreen.x},${casterTopScreen.y} ${endScreenPt.x},${endScreenPt.y}`);
+  }
   lineSky.setAttribute('opacity', '0.95');
 }

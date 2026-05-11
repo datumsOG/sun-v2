@@ -43,11 +43,19 @@ let datetime = new Date();
 let observer = { lat: 43.6532, lon: -79.3832 };
 let moonMode = false;
 
-let calibrationOffset = 0;
-const HEADING_SMOOTHING = 0.10;
-const TILT_SMOOTHING = 0.15;
+// Calibration offsets (signed, degrees). Persisted to localStorage so a single
+// calibration survives reloads. azCalibOffset shifts heading; elCalibOffset shifts pitch.
+let azCalibOffset = 0;
+let elCalibOffset = 0;
+const HEADING_SMOOTHING = 0.08;
+const TILT_SMOOTHING = 0.10;
 const HEADING_SPIKE = 30;
-const HALF_HFOV_TAN = Math.tan(34 * Math.PI / 180);
+
+// FOV presets for the screen's horizontal axis. Tuned for typical phone
+// orientations; user picks via 0.5× / 1× / 2× toggle.
+const FOV_PRESETS_DEG = [80, 55, 30]; // wide / normal / tele
+let fovIdx = 1;
+let halfHfovTan = Math.tan(FOV_PRESETS_DEG[fovIdx] / 2 * Math.PI / 180);
 
 let elView, elVideo, elGuide, elDisk, elDiskShadow;
 let elSensorBtn, elCalibrate, elCapture, elArBtn, elArOverlay;
@@ -116,8 +124,61 @@ export function initCameraView() {
   }
 
   if (elSensorBtn) elSensorBtn.addEventListener('click', enableSensors);
-  if (elCalibrate) elCalibrate.addEventListener('click', calibrate);
+  if (elCalibrate) {
+    elCalibrate.addEventListener('click', calibrate);
+    // Long-press to clear calibration
+    let pressT = null;
+    const start = () => { pressT = setTimeout(clearCalibration, 700); };
+    const cancel = () => { if (pressT) clearTimeout(pressT); pressT = null; };
+    elCalibrate.addEventListener('touchstart', start, { passive: true });
+    elCalibrate.addEventListener('touchend',   cancel, { passive: true });
+    elCalibrate.addEventListener('touchcancel',cancel, { passive: true });
+    elCalibrate.addEventListener('mousedown',  start);
+    elCalibrate.addEventListener('mouseup',    cancel);
+    elCalibrate.addEventListener('mouseleave', cancel);
+  }
   if (elCapture)   elCapture.addEventListener('click', captureFrame);
+
+  // Restore saved calibration + FOV
+  try {
+    const c = JSON.parse(localStorage.getItem('sun_cam_calib') || 'null');
+    if (c) { azCalibOffset = +c.az || 0; elCalibOffset = +c.el || 0; }
+    const f = +localStorage.getItem('sun_cam_fov');
+    if (Number.isInteger(f) && f >= 0 && f <= 2) setFovPreset(f);
+  } catch {}
+
+  // Wire FOV preset buttons
+  const fovBtns = document.querySelectorAll('.cam-fov-btn');
+  fovBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const i = +btn.getAttribute('data-fov');
+      setFovPreset(i);
+      fovBtns.forEach(b => b.classList.toggle('active', +b.getAttribute('data-fov') === fovIdx));
+    });
+  });
+  fovBtns.forEach(b => b.classList.toggle('active', +b.getAttribute('data-fov') === fovIdx));
+}
+
+export function setFovPreset(idx) {
+  fovIdx = Math.max(0, Math.min(FOV_PRESETS_DEG.length - 1, idx));
+  halfHfovTan = Math.tan(FOV_PRESETS_DEG[fovIdx] / 2 * Math.PI / 180);
+  try { localStorage.setItem('sun_cam_fov', String(fovIdx)); } catch {}
+}
+
+function saveCalibration() {
+  try {
+    localStorage.setItem('sun_cam_calib', JSON.stringify({ az: azCalibOffset, el: elCalibOffset }));
+  } catch {}
+}
+
+function clearCalibration() {
+  azCalibOffset = 0;
+  elCalibOffset = 0;
+  saveCalibration();
+  if (elCalibrate) {
+    elCalibrate.textContent = 'Cleared';
+    setTimeout(() => { if (elCalibrate) elCalibrate.textContent = 'Align'; }, 1200);
+  }
 }
 
 export function showCameraView() {
@@ -226,8 +287,8 @@ function tick() {
     ? getMoonPos(datetime, observer.lat, observer.lon)
     : getPosition(datetime, observer.lat, observer.lon);
 
-  const calibAz = ((body.azimuthDeg + calibrationOffset) % 360) * Math.PI / 180;
-  const el = body.altitudeDeg * Math.PI / 180;
+  const calibAz = ((body.azimuthDeg + azCalibOffset + 720) % 360) * Math.PI / 180;
+  const el = (body.altitudeDeg + elCalibOffset) * Math.PI / 180;
 
   const bodyWorld = [
     Math.cos(el) * Math.sin(calibAz),
@@ -242,13 +303,13 @@ function tick() {
   // Sun/moon stays visible regardless of where it falls — we let the browser
   // clip naturally so the disk doesn't pop when half-off-screen.
   const W = window.innerWidth, H = window.innerHeight;
-  const halfVfovTan = HALF_HFOV_TAN * (H / W);
+  const halfVfovTan = halfHfovTan * (H / W);
   const depth = -v[2]; // > 0 when body is in front of rear camera
   let inFront = depth > 0.01;
   let sx = W/2, sy = H/2, guideAngle = 0;
 
   if (inFront) {
-    const ndcX = (v[0] / depth) / HALF_HFOV_TAN;
+    const ndcX = (v[0] / depth) / halfHfovTan;
     const ndcY = (v[1] / depth) / halfVfovTan;
     sx = (ndcX + 1) / 2 * W;
     sy = (1 - ndcY) / 2 * H;
@@ -282,7 +343,7 @@ function projectUnit(world, W, H, halfVfovTan) {
   const v = mv3(T3(R), world);
   const depth = -v[2];
   if (depth <= 0.01) return null;
-  const ndcX = (v[0] / depth) / HALF_HFOV_TAN;
+  const ndcX = (v[0] / depth) / halfHfovTan;
   const ndcY = (v[1] / depth) / halfVfovTan;
   return { x: (ndcX + 1) / 2 * W, y: (1 - ndcY) / 2 * H };
 }
@@ -292,7 +353,7 @@ function projectPoint(worldM, W, H, halfVfovTan) {
   const v = mv3(T3(R), worldM);
   const depth = -v[2];
   if (depth <= 0.01) return null;
-  const ndcX = (v[0] / depth) / HALF_HFOV_TAN;
+  const ndcX = (v[0] / depth) / halfHfovTan;
   const ndcY = (v[1] / depth) / halfVfovTan;
   const dist = Math.hypot(v[0], v[1], v[2]);
   return { x: (ndcX + 1) / 2 * W, y: (1 - ndcY) / 2 * H, dist };
@@ -332,8 +393,8 @@ function renderAR(W, H, halfVfovTan) {
 
   for (let i = 0; i < samples.length; i++) {
     const s = samples[i];
-    const az = ((s.azDeg + calibrationOffset) % 360) * Math.PI / 180;
-    const el = s.altDeg * Math.PI / 180;
+    const az = ((s.azDeg + azCalibOffset + 720) % 360) * Math.PI / 180;
+    const el = (s.altDeg + elCalibOffset) * Math.PI / 180;
     const world = [
       Math.cos(el) * Math.sin(az),
       Math.cos(el) * Math.cos(az),
@@ -349,8 +410,8 @@ function renderAR(W, H, halfVfovTan) {
   const body = moonMode
     ? getMoonPos(datetime, observer.lat, observer.lon)
     : getPosition(datetime, observer.lat, observer.lon);
-  const bAz = ((body.azimuthDeg + calibrationOffset) % 360) * Math.PI / 180;
-  const bEl = body.altitudeDeg * Math.PI / 180;
+  const bAz = ((body.azimuthDeg + azCalibOffset + 720) % 360) * Math.PI / 180;
+  const bEl = (body.altitudeDeg + elCalibOffset) * Math.PI / 180;
   const bodyDir = [Math.cos(bEl)*Math.sin(bAz), Math.cos(bEl)*Math.cos(bAz), Math.sin(bEl)];
   const bodyScreen = projectUnit(bodyDir, W, H, halfVfovTan);
 
@@ -360,8 +421,8 @@ function renderAR(W, H, halfVfovTan) {
   const casterWorld = [0, 0, casterH - EYE_HEIGHT_M];
   const casterP = projectPoint(casterWorld, W, H, halfVfovTan);
   if (casterP) {
-    // Pixel size: 2 m sphere → diameter ≈ (2/dist) * (W/2) / HALF_HFOV_TAN
-    const px = Math.max(8, (2 / Math.max(0.5, casterP.dist)) * (W / 2) / HALF_HFOV_TAN);
+    // Pixel size: 2 m sphere → diameter ≈ (2/dist) * (W/2) / halfHfovTan
+    const px = Math.max(8, (2 / Math.max(0.5, casterP.dist)) * (W / 2) / halfHfovTan);
     elArCaster.style.display = '';
     elArCaster.style.left = casterP.x + 'px';
     elArCaster.style.top  = casterP.y + 'px';
@@ -391,7 +452,7 @@ function renderAR(W, H, halfVfovTan) {
     const tanEl = Math.tan(bEl);
     const dist = shadowH / tanEl; // metres, uncapped
     if (dist < 4000) {
-      const shadowAz = (body.azimuthDeg + calibrationOffset + 180) % 360;
+      const shadowAz = (body.azimuthDeg + azCalibOffset + 180) % 360;
       const shAzRad = shadowAz * Math.PI / 180;
       // End point at floor height above observer's feet.
       const endWorld = [dist * Math.sin(shAzRad), dist * Math.cos(shAzRad), floorH - EYE_HEIGHT_M];
@@ -473,12 +534,28 @@ function updateMoonShadow() {
   elDiskShadow.style.clipPath = clip;
 }
 
+/**
+ * Visual calibration: user aims the centre of the camera at the actual sun
+ * (or moon) and taps Align. We compute where the camera is pointed in world
+ * coordinates (by mapping device-forward [0,0,-1] back through R), and store
+ * the discrepancy vs. the body's true az/el as both heading and pitch offsets.
+ */
 function calibrate() {
   const body = moonMode
     ? getMoonPos(datetime, observer.lat, observer.lon)
     : getPosition(datetime, observer.lat, observer.lon);
-  const currentHeading = headingSmoothed || 0;
-  calibrationOffset = (body.azimuthDeg - currentHeading + 360) % 360;
+
+  // Camera forward vector in world (ENU) frame
+  const fwdWorld = mv3(R, [0, 0, -1]);
+  const camAz = ((Math.atan2(fwdWorld[0], fwdWorld[1]) * 180 / Math.PI) + 360) % 360;
+  const camEl = Math.asin(Math.max(-1, Math.min(1, fwdWorld[2]))) * 180 / Math.PI;
+
+  // Sign convention: render adds offset to body's az/el. We want
+  // (body.az + offsetAz) ≡ camAz (mod 360), so offsetAz = camAz − body.az.
+  azCalibOffset = ((camAz - body.azimuthDeg + 540) % 360) - 180;
+  elCalibOffset = camEl - body.altitudeDeg;
+
+  saveCalibration();
   if (elCalibrate) {
     elCalibrate.textContent = 'Aligned ✓';
     setTimeout(() => { if (elCalibrate) elCalibrate.textContent = 'Align'; }, 1500);

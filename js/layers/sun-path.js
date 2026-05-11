@@ -18,8 +18,17 @@ let arcRadiusKm = 1.5;          // adjustable via vertical slider
 let anchorLiftMetres = 0;       // baseline lift added to every sample (caster height when shadow on)
 const SAMPLES = 60;
 let mapRef = null;
+// Grid-mode SVG overlay: mirrors SR/SS/RAY lines when the MapLibre canvas is hidden.
+let gridLinesSvg = null;
+let gridSrEl = null, gridSsEl = null, gridRayEl = null;
+let srCoords = null, ssCoords = null, rayCoords = null;
+let gridLinesActive = false;
+
 let arcSamples = [];            // [{ lon, lat, altDeg }]
 let arcMarkers = [];
+let arcDotBaseSizes = [];       // base size (px) set at arc build time, before density scaling
+let _lastOffsets = [];          // cached [dx,dy] per marker — skip DOM write if sub-pixel change
+let _lastZIndex = [];           // cached zIndex string per marker
 let liveSample = null;          // { lon, lat, altDeg }
 let liveMarker = null;
 let visible = true;
@@ -28,7 +37,8 @@ let dropLine = null;
 let dropLineColor = '#ffb845';  // yellow sun, white moon
 
 export function setArcRadiusKm(km) {
-  arcRadiusKm = Math.max(0.02, +km || 1.5);
+  // Floor lowered to 5 m so grid mode can use a backyard-scale arc.
+  arcRadiusKm = Math.max(0.005, +km || 1.5);
   if (mapRef) refreshArcGeometry();
 }
 export function getArcRadiusKm() { return arcRadiusKm; }
@@ -46,22 +56,57 @@ export function setAnchorLiftMetres(m) {
 }
 export function getAnchorLiftMetres() { return anchorLiftMetres; }
 
+export function setGridModeLines(active) {
+  gridLinesActive = !!active;
+  if (gridLinesSvg) gridLinesSvg.style.display = active ? '' : 'none';
+}
+
+function _makeGridSvgLine(color, width) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  el.setAttribute('stroke', color); el.setAttribute('stroke-width', String(width));
+  el.setAttribute('stroke-linecap', 'round'); el.setAttribute('opacity', '0');
+  return el;
+}
+
+function _projectGridLine(el, coords) {
+  if (!el || !coords || !mapRef) { if (el) el.setAttribute('opacity', '0'); return; }
+  const a = mapRef.project(coords[0]), b = mapRef.project(coords[coords.length - 1]);
+  if (!Number.isFinite(a.x) || !Number.isFinite(b.x)) { el.setAttribute('opacity', '0'); return; }
+  el.setAttribute('x1', String(a.x|0)); el.setAttribute('y1', String(a.y|0));
+  el.setAttribute('x2', String(b.x|0)); el.setAttribute('y2', String(b.y|0));
+  el.setAttribute('opacity', '0.9');
+}
+
+function _renderGridLines() {
+  if (!gridLinesActive || !mapRef) return;
+  _projectGridLine(gridSrEl, srCoords);
+  _projectGridLine(gridSsEl, ssCoords);
+  _projectGridLine(gridRayEl, rayCoords);
+}
+
 export function addSunPathLayer(map) {
   mapRef = map;
   if (map.getSource(SR_SRC)) return;
   const empty = { type: 'FeatureCollection', features: [] };
 
-  map.addSource(SR_SRC, { type: 'geojson', data: empty });
-  map.addSource(SS_SRC, { type: 'geojson', data: empty });
+  map.addSource(SR_SRC, { type: 'geojson', data: empty, lineMetrics: true });
+  map.addSource(SS_SRC, { type: 'geojson', data: empty, lineMetrics: true });
   map.addSource(RAY_SRC, { type: 'geojson', data: empty });
 
+  // Solid lines with gradient fade at both ends (lineMetrics required for line-gradient).
   map.addLayer({ id: SR_LINE, type: 'line', source: SR_SRC,
     layout: { 'line-cap': 'round' },
-    paint: { 'line-color': '#ff8a3d', 'line-width': 3, 'line-opacity': 0.95, 'line-dasharray': [0.6, 1.2] },
+    paint: { 'line-width': 3,
+      'line-gradient': ['interpolate', ['linear'], ['line-progress'],
+        0, 'rgba(255,138,61,0)', 0.18, 'rgba(255,138,61,0.95)',
+        0.82, 'rgba(255,138,61,0.95)', 1, 'rgba(255,138,61,0)'] },
   });
   map.addLayer({ id: SS_LINE, type: 'line', source: SS_SRC,
     layout: { 'line-cap': 'round' },
-    paint: { 'line-color': '#ff5e3d', 'line-width': 3, 'line-opacity': 0.95, 'line-dasharray': [0.6, 1.2] },
+    paint: { 'line-width': 3,
+      'line-gradient': ['interpolate', ['linear'], ['line-progress'],
+        0, 'rgba(255,94,61,0)', 0.18, 'rgba(255,94,61,0.95)',
+        0.82, 'rgba(255,94,61,0.95)', 1, 'rgba(255,94,61,0)'] },
   });
   map.addLayer({ id: RAY_LINE, type: 'line', source: RAY_SRC,
     layout: { 'line-cap': 'round' },
@@ -79,10 +124,21 @@ export function addSunPathLayer(map) {
   dropSvg.appendChild(dropLine);
   document.body.appendChild(dropSvg);
 
+  // Grid-mode SVG: mirrors SR/SS/RAY lines when the MapLibre canvas is hidden.
+  gridLinesSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  gridLinesSvg.setAttribute('style', 'position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:3;');
+  gridLinesSvg.style.display = 'none';
+  gridSrEl  = _makeGridSvgLine('#ff8a3d', 3.0);
+  gridSsEl  = _makeGridSvgLine('#ff5e3d', 3.0);
+  gridRayEl = _makeGridSvgLine('#ffb845', 2.5);
+  gridLinesSvg.appendChild(gridSrEl); gridLinesSvg.appendChild(gridSsEl); gridLinesSvg.appendChild(gridRayEl);
+  document.body.appendChild(gridLinesSvg);
+
   // Re-project markers when the map zooms so altitude scales with zoom.
   map.on('zoom', updateAllOffsets);
   map.on('move', updateAllOffsets);
   map.on('render', renderDropLine);
+  map.on('render', _renderGridLines);
 }
 
 export function setSunPathVisible(map, vis) {
@@ -110,6 +166,9 @@ export function setRayLineVisible(map, vis) {
 function clearArcMarkers() {
   for (const m of arcMarkers) m.remove();
   arcMarkers = [];
+  arcDotBaseSizes = [];
+  _lastOffsets = [];
+  _lastZIndex = [];
 }
 
 // True spherical projection: place the body on a sphere of radius arcRadius
@@ -141,12 +200,66 @@ function offsetForSample(s) {
 }
 
 function updateAllOffsets() {
-  for (let i = 0; i < arcMarkers.length; i++) {
-    const s = arcSamples[i];
-    arcMarkers[i].setOffset(offsetForSample(s));
+  const n = arcMarkers.length;
+  if (!n) {
+    if (liveMarker && liveSample) {
+      liveMarker.setOffset(offsetForSample(liveSample));
+      liveMarker.getElement().style.zIndex = '9999';
+    }
+    renderDropLine();
+    return;
   }
+
+  // Density-aware dot sizing: measure average screen-space gap between adjacent dots
+  // and shrink dots so they don't overlap when zoomed out.
+  let totalGap = 0, gapCount = 0;
+  const screenPts = arcSamples.map(s => mapRef ? mapRef.project([s.lon, s.lat]) : null);
+  for (let i = 1; i < n; i++) {
+    const a = screenPts[i - 1], b = screenPts[i];
+    if (a && b && Number.isFinite(a.x) && Number.isFinite(b.x)) {
+      const dx = b.x - a.x, dy = b.y - a.y;
+      totalGap += Math.sqrt(dx * dx + dy * dy);
+      gapCount++;
+    }
+  }
+  // avgGap in screen px between adjacent dots; max dot size = avgGap so dots just touch.
+  const avgGap = gapCount ? totalGap / gapCount : 999;
+  const maxAllowed = Math.max(3, Math.min(10, avgGap));
+
+  for (let i = 0; i < n; i++) {
+    const s = arcSamples[i];
+    const [dx, dy] = offsetForSample(s);
+
+    // Jitter fix: skip setOffset if sub-pixel change from last write.
+    const last = _lastOffsets[i];
+    if (!last || Math.abs(dx - last[0]) >= 1 || Math.abs(dy - last[1]) >= 1) {
+      arcMarkers[i].setOffset([dx, dy]);
+      _lastOffsets[i] = [dx, dy];
+    }
+
+    // Density-aware size.
+    const base = arcDotBaseSizes[i] ?? 5;
+    const sized = Math.round(Math.min(base, maxAllowed));
+    const el = arcMarkers[i].getElement();
+    if (el._lastSized !== sized) {
+      el.style.width = el.style.height = sized + 'px';
+      el._lastSized = sized;
+    }
+
+    // Z-order (skip if unchanged).
+    const px = screenPts[i];
+    if (px && Number.isFinite(px.y)) {
+      const zi = String(Math.round(px.y));
+      if (_lastZIndex[i] !== zi) {
+        el.style.zIndex = zi;
+        _lastZIndex[i] = zi;
+      }
+    }
+  }
+
   if (liveMarker && liveSample) {
     liveMarker.setOffset(offsetForSample(liveSample));
+    liveMarker.getElement().style.zIndex = '9999'; // live dot always in front
   }
   // Slider changes don't trigger a map render event, so sync the drop line now.
   renderDropLine();
@@ -185,6 +298,7 @@ export function updateSunPathDay(map, observer, datetime, moonMode = false) {
     rise = t.sunrise; set = t.sunset;
   }
 
+  if (liveMarker) { liveMarker.remove(); liveMarker = null; }
   clearArcMarkers();
   arcSamples = [];
   if (rise && set && rise < set) {
@@ -200,11 +314,16 @@ export function updateSunPathDay(map, observer, datetime, moonMode = false) {
       const sample = { lon: glon, lat: glat, altDeg: p.altitudeDeg, azDeg: p.azimuthDeg };
       const dot = document.createElement('div');
       dot.className = 'arc-dot';
+      // Perspective size: overhead dots (high alt) are closer → appear larger
+      const sizePx = Math.round(5 + 5 * Math.sin(Math.min(90, p.altitudeDeg) * Math.PI / 180));
+      dot.style.width = dot.style.height = sizePx + 'px';
+      dot._lastSized = sizePx;
       const m = new maplibregl.Marker({ element: dot, offset: offsetForSample(sample) })
         .setLngLat([glon, glat])
         .addTo(map);
       arcMarkers.push(m);
       arcSamples.push(sample);
+      arcDotBaseSizes.push(sizePx);
     }
   }
 
@@ -287,9 +406,15 @@ function renderDropLine() {
 }
 
 function setLine(map, srcId, coords) {
+  // Cache coords for grid-mode SVG reprojection.
+  const valid = coords && coords.length >= 2;
+  if (srcId === SR_SRC)  srCoords  = valid ? coords : null;
+  else if (srcId === SS_SRC)  ssCoords  = valid ? coords : null;
+  else if (srcId === RAY_SRC) rayCoords = valid ? coords : null;
+
   const src = map.getSource(srcId);
   if (!src) return;
-  if (!coords || coords.length < 2) {
+  if (!valid) {
     src.setData({ type: 'FeatureCollection', features: [] });
     return;
   }

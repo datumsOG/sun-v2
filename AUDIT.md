@@ -762,6 +762,173 @@ The `<span>` value displays in the Caster and Floor rows were replaced with `<in
 
 ---
 
+---
+
+## Part 12 — Spherical slider thumbs + idle perspective drift (2026-05-05)
+
+### Change 1: Spherical slider thumbs
+All four sliders (tilt vslider, radius vslider, Caster elev-row, Floor elev-row) now have circular sphere-style thumbs instead of flat rectangles or browser defaults. The thumb uses a radial gradient (`white → light blue → steel blue`) to suggest a sphere lit from upper-left. The vertical sliders were previously 28×12 px rectangles (hard to grab on a phone) — now 24×24 px circles.
+
+### Implementation (css/style.css)
+- `.vslider::-webkit-slider-thumb` / `::-moz-range-thumb`: changed from `width:28px; height:12px; border-radius:4px` to `width:24px; height:24px; border-radius:50%` with radial gradient and updated `margin-left:-11px`.
+- `.elev-row input[type=range]`: added `-webkit-appearance:none` / `appearance:none` plus custom track background. Added `::-webkit-slider-thumb` / `::-moz-range-thumb` with 20×20 sphere style matching the vslider thumbs.
+
+### Change 2: Idle perspective drift
+After 4 seconds of no map interaction, the map gently oscillates its bearing (±2°, ~16 s period) and pitch (±1.5°, ~22 s period) to preserve the 3D depth effect when static. Stops immediately on any canvas interaction and eases back to the base position over 600 ms.
+
+### Implementation (js/app.js)
+- Module-level drift state: `_driftRafId`, `_driftBaseBearing`, `_driftBasePitch`, `_driftT0`, `_lastInteract`, `DRIFT_IDLE_MS = 4000`.
+- `_driftFrame(ts)`: RAF loop; exits if camera mode or compass active.
+- `stopDrift()`: cancels the RAF loop; calls `map.easeTo()` to glide back to base bearing/pitch over 600 ms; resets `_lastInteract`.
+- `_startDrift()`: captures current bearing/pitch as base; starts RAF loop.
+- In `main()`:
+  - Canvas `mousedown` / `touchstart` / `wheel` listeners call `stopDrift()`.
+  - `setInterval(1000)` checks `Date.now() - _lastInteract > 4000` and calls `_startDrift()`.
+  - `map.on('pitch', ...)` tilt-slider sync skips update when `_driftRafId` is set (prevents slider jitter during drift).
+- `tryGeolocate()`: calls `stopDrift()` at entry so flyTo doesn't conflict.
+
+### Files changed
+- `css/style.css` — vslider and elev-row range thumb styles
+- `js/app.js` — drift state + functions + wiring
+- `sw.js` — `v39` → `v40`
+- `index.html` — asset strings bumped to `?v=40`
+
+---
+
+---
+
+## Part 13 — Polish pass: depth, touch, lines, scale (2026-05-06)
+
+### Arc dot z-ordering
+Arc markers now update their CSS `z-index` to match their projected screen Y position (computed in `updateAllOffsets`). Higher screen Y = closer to camera in pitched view = higher z-index = drawn in front. The live (head) dot is always at `z-index: 9999`. This fixes the backwards depth cue where near-horizon dots were appearing in front of overhead dots.
+
+### Arc dot perspective size
+Dots now scale with `5 + 5 * sin(altDeg)` px, giving 5 px at the horizon and 10 px at zenith. Overhead dots appear larger (closer), horizon dots appear smaller (farther). Size is set inline when each dot element is created in `updateSunPathDay`.
+
+### Solid sunrise/sunset lines with faded ends
+`SR_SRC` and `SS_SRC` GeoJSON sources now use `lineMetrics: true`. Layer paint changed from `line-color + line-dasharray` to `line-gradient` with transparency at 0% and 100% progress (both endpoints) and full opacity from 18%–82%. Dasharray removed.
+
+### vslider touch area
+`width: 22px` → `44px`, `right: 12px` → `4px`. Track and thumb are visually unchanged (1.5 px track, 24 px sphere thumb). The element is wider on both sides, giving a much larger grab zone on mobile.
+
+### Elev-row slider touch area
+Added `height: 24px` to the elev-row range inputs (was 4 px). Track drawn via `::webkit-slider-runnable-track` at 4 px, so visuals are unchanged while touch target is 6× larger.
+
+### Slider spacing and bottom overflow
+- Tilt slider: `height` reduced from `33vh - 30px` to `33vh - 44px` (more gap between sliders).
+- Radius slider: `top: 33vh + 24px` (was `33vh + 14px`); height now `calc(67vh - 280px - var(--safe-bottom))` with `min-height: 40px`. This anchors the bottom of the slider to a safe distance above the dock even when the shadow panel is open (~228 px tall).
+
+### Scale bar
+`maplibregl.ScaleControl({ maxWidth: 80, unit: 'metric' })` added to `bottom-left` after map style is ready. CSS: `.maplibregl-ctrl-bottom-left` removed from hidden list and positioned at `bottom: calc(safe-bottom + 170px)`. Scale bar styled with dark glass background to match the app theme. Previously `.maplibregl-ctrl-bottom-left` was hidden by the blanket hide rule; now only attrib, top-left, top-right, and bottom-right are hidden.
+
+### Invert mode marker color fix
+Removed the `body.invert .arc-dot / .caster-sphere / .shadow-end / #shadow-svg { filter: invert(1)... }` rules. These were double-inverting the markers when the map canvas was inverted (trying to keep them looking the same but producing incorrect hues). The canvas filter only affects the raster canvas; markers are DOM elements that were already unaffected. Removing the rules leaves marker colors natural in both light and dark map modes.
+
+### Not implemented this pass
+- Small/backyard mode (grid, no map) — significant feature, needs separate scope.
+- Map pan speed dampening at top of pitched viewport — inherent to MapLibre perspective math; would require overriding all drag handlers.
+
+### Files changed
+- `css/style.css` — controls visibility, scale bar styles, invert fix, vslider width, elev-row height, slider positioning
+- `js/layers/sun-path.js` — z-ordering in `updateAllOffsets`, size scaling in `updateSunPathDay`, solid+gradient SR/SS lines
+- `js/app.js` — `map.addControl(ScaleControl)`
+- `sw.js` — `v40` → `v41`
+- `index.html` — asset strings bumped to `?v=41`
+
+---
+
+---
+
+## Part 14 — Grid mode + top-of-screen pan guard (2026-05-06)
+
+### Map top-of-screen pan guard
+At high pitch, the top 28% of the map canvas maps to the distant horizon. A 1 mm drag there moves the map by kilometres. Fix: capture-phase `touchmove` listener on the map canvas blocks single-touch moves originating in the top 28% by calling `stopImmediatePropagation()`. Multi-touch (pinch-to-zoom) and taps pass through unaffected.
+
+### Grid mode (`js/layers/grid.js`, new)
+A graph-paper style SVG overlay that replaces the tile map in "backyard" use. The map canvas fades to `opacity: 0` (CSS transition) while the `#map` dark background and all DOM markers (arc, shadow, etc.) remain fully visible. MapLibre continues running in the background — its projection math and `map.project()` are used for all coordinate transforms, so the grid has correct perspective foreshortening with map pitch.
+
+**Cell auto-scaling:** `pixPerMetre()` computes a screen pixel/metre ratio from two projected points. `pickCell()` picks the nice step value (e.g., 1 cm, 10 cm, 1 m, 10 m …) that puts ~60 px between grid lines. At zoom 24 (~4 m view) this gives 1 m major / 0.1 m minor; at zoom 20 (~60 m view) it gives 10 m major / 1 m minor.
+
+**Line hierarchy:** Axis lines (through observer) at opacity 0.5, major lines (every 10 cells) at 0.22, minor lines at 0.07. Labels shown at major lines crossing the observer's screen row/column.
+
+**Imperial toggle:** `unit-btn` in the dock (visible only in grid mode) toggles metric ↔ imperial. State persisted in `localStorage['sun_grid_unit']`. Imperial uses nice foot steps expressed in metres; labels show `"`, `'`, or mi.
+
+**Transition:** Tap Grid → tiles fade out over 0.55 s + `map.flyTo({zoom:24})` simultaneously. The observer pin is kept centred; all arc/shadow overlays remain on top. Tap Grid again or switch to camera → `map.flyTo({zoom:14})` + tiles fade back in.
+
+**Location model:** The observer (set by tapping the regular map, geolocation, or search) is the grid origin. Tapping the map in grid mode moves the origin. The user sets location on the regular map first, then taps Grid — the fly-in animation makes this feel intentional.
+
+### `map.js`
+`maxZoom: 24` added so `map.flyTo({zoom: 24})` is reachable.
+
+### Files changed
+- `js/layers/grid.js` — new (140 lines)
+- `js/map.js` — maxZoom: 24
+- `js/app.js` — import; `_enterGrid` / `_exitGrid`; grid-toggle + unit-toggle wiring; observer subscription; touch guard
+- `index.html` — grid-toggle and unit-toggle buttons; `?v=42`
+- `css/style.css` — canvas transition, `body.grid-mode` tile fade, unit-btn visibility, grid-toggle active colour
+- `sw.js` — `v41` → `v42`
+
+---
+
+---
+
+## Part 15 — Camera mode 2.0 phase 1: visual calibration + FOV presets (2026-05-06)
+
+### Visual sun/moon calibration
+The Align button now performs a true two-axis visual calibration. The user aims the centre of the camera at the actual sun (or moon) and taps Align. Implementation: compute the camera-forward direction in world ENU coordinates as `R · [0,0,−1]`, convert to (camAz, camEl), and store the discrepancy vs. the body's astronomically-calculated (az, el) as `azCalibOffset` and `elCalibOffset`. Both are persisted to `localStorage['sun_cam_calib']` so a single calibration survives reloads.
+
+The on-screen crosshair (centre of the screen, white circle with cardinal ticks) gives the user a precise aim point.
+
+The previous calibration was heading-only and used the smoothed sensor heading at tap time as a "snap to truth" rule, which was wrong: it didn't compensate for actual aim error or for pitch bias. The new method handles both.
+
+**Long-press on Align clears calibration** (700 ms hold → both offsets reset to 0, label flashes "Cleared").
+
+### FOV preset toggle
+0.5× / 1× / 2× pill at the top of the camera view, mapping to 80° / 55° / 30° horizontal screen FOV. Selection persisted in `localStorage['sun_cam_fov']`. The `HALF_HFOV_TAN` constant was replaced with a runtime `halfHfovTan` that is recomputed when the preset changes; vertical FOV is still derived from screen aspect ratio.
+
+### Smoother orientation
+`HEADING_SMOOTHING` 0.10 → 0.08, `TILT_SMOOTHING` 0.15 → 0.10 — heavier exponential filter, less twitch when phone is held still.
+
+### Files changed
+- `js/ui/arrow-view.js` — calibration math (camera-forward method); two-axis offsets persisted; FOV preset state + `setFovPreset()`; long-press clear; smoothing tweak
+- `index.html` — `#cam-crosshair` SVG, `#cam-fov-row` with three buttons; `?v=43`
+- `css/style.css` — crosshair + FOV row styles, only visible in `body.view-camera`
+- `sw.js` — `v42` → `v43`
+
+### Not implemented this pass (per scope)
+- WebXR fast path (Android-only; iOS has no support)
+- Continuous sun-spot detection (flaky; flag-gated for later)
+- Time-lock + share preview (user said screenshot is fine)
+- Lens picker via `enumerateDevices` (defaults are good enough)
+
+---
+
+---
+
+## Part 16 — Grid mode bugfixes (2026-05-06)
+
+### Bug: arc/shadow graphics break in grid mode and don't recover on exit
+**Root cause:** at zoom 24, MapLibre's camera altitude drops to ~6.7 m AGL while default arc altitudes (e.g. 680 m radius × sin(30°) = 340 m) are far higher. `project3D` falls through its "camera below body" guard and returns the flat ground projection, collapsing all arc dots to ground positions. The day-level arc was never rebuilt on entry/exit, so the breakage persisted after switching back.
+
+**Fix:**
+- Grid entry zoom dropped from **24 → 21** (~21 m wide, camera ≈ 54 m AGL — well above any ≤10 m arc apex).
+- Arc radius is now **forced to 10 m on grid entry** (saved slider value restored on exit). The `setArcRadiusKm` floor was lowered from 20 m to 5 m to allow this.
+- A `_refreshLayers(map)` helper is fired on `moveend` after both the entry and exit `flyTo` animations, calling `updateSunPathDay` + `updateSunNow` so the arc rebuilds against the new zoom/centre.
+
+### Bug: unit toggle pushed off-screen
+**Root cause:** the dock's control row had grown to 10 buttons; with grid mode adding the unit toggle, total width exceeded the screen on small phones.
+
+**Fix:** the unit toggle is removed from the dock and rendered as a floating pill in the top-left corner (matching the camera FOV pill style). Only visible when `body.grid-mode` is set. This keeps the dock compact and the toggle obviously available without crowding.
+
+### Files changed
+- `js/layers/sun-path.js` — `setArcRadiusKm` floor 0.02 → 0.005
+- `js/app.js` — `_enterGrid` saves slider, sets 10 m radius, zoom 21, `moveend` refresh; `_exitGrid` restores radius from saved slider, `moveend` refresh; `_refreshLayers` helper
+- `index.html` — `#unit-toggle` moved out of `#control-row` to be a top-level floating element
+- `css/style.css` — new `#unit-toggle` floating pill rules; old `.unit-btn` rules removed
+- `sw.js` — `v43` → `v44`
+
+---
+
 ## Session summary (2026-05-05 full session)
 
 Versions v36 through v39 were produced in this session. Key changes in order:
@@ -772,4 +939,142 @@ Versions v36 through v39 were produced in this session. Key changes in order:
 | v37 | Error monitoring (`js/monitor.js`): localStorage ring buffer, Sentry hook; crash hardening in `arrow-view.js`, `shadow.js`, `sun-path.js` |
 | v38 | Shadow geometry redesign: caster fixed at OBJECT_H_M, floor surface at FLOOR_H_M, shadow hidden when too long, green ground-ref indicator. UI persistence (sliders to localStorage). AR shadow updated to match. |
 | v39 | Tap-to-edit number inputs for Caster and Floor height rows. |
+| v40 | Spherical slider thumbs (all four sliders). Idle perspective drift (±2° bearing, ±1.5° pitch oscillation after 4 s idle; stops on interaction). |
+| v44 | Grid mode bugfixes: zoom 24 → 21, arc radius auto-shrunk to 10 m on entry (lower floor 5 m); `moveend` triggers `updateSunPathDay`/`updateSunNow` so arc rebuilds at new scale on entry+exit; unit toggle moved out of dock to a floating top-left pill. |
+| v43 | Camera mode 2.0 phase 1: visual sun/moon calibration (camera-forward method, both az+el offsets, persisted), FOV preset toggle (0.5×/1×/2×), centre crosshair, smoother sensor filter, long-press to clear calibration. |
+| v42 | Grid mode (graph-paper SVG overlay, auto-scaling, metric/imperial, fly-in transition). Top-of-screen pan guard (28% zone blocked for single-touch drag). |
+| v41 | Arc dot z-ordering (screen-Y-based, correct depth cue with map pitch). Arc dot perspective size scaling (5–10 px by altitude). Solid sunrise/sunset lines with gradient fade at both ends. Wider vslider touch area (44 px). Wider elev-row slider touch area (24 px tall hit zone). Scale bar (MapLibre ScaleControl, bottom-left, styled). Slider spacing and bottom-overflow fix. Invert mode no longer double-inverts arc/shadow markers (colors stay consistent). |
+| v45 | Arc dot density-aware sizing: `updateAllOffsets` computes average inter-dot screen gap and caps rendered size so dots shrink proportionally when zoomed out (prevents bunching). Drift jitter fix: per-marker offset cache in `updateAllOffsets` skips `setOffset`/`zIndex` DOM writes when change is sub-pixel (< 1px), eliminating ±1px jitter during idle drift. |
+| v46 | Stability pass (see Part 17). Grid mode DOM thrashing fixed; `redraw()` layer isolation; drift guard. |
 
+---
+
+## Part 17 — Stability Pass (2026-05-08)
+
+**Fixes implemented based on cross-audit of internal AUDIT.md, Gemini-3-Flash audit (2026-05-07), and GPT-5 mini audit (2026-05-07). Priority: stop the app crashing on mobile.**
+
+---
+
+### Fix 1 — Grid mode DOM thrashing (`js/layers/grid.js` — rewrite of render path)
+
+**Root cause (Gemini CRITICAL-P1):** The original `_render()` called `_clear()` on every `map.on('render')` event (up to 60fps during pan/zoom), which removed all SVG children and then recreated **800+ `<line>` elements** plus `<defs>`, `<clipPath>`, and a `<g>` container from scratch. On mid-range phones this caused extreme GC pressure and layout thrashing — the primary cause of the app crashing or freezing in grid mode.
+
+**Fix:** Three persistent `<path>` elements (`pathMinor`, `pathMajor`, `pathAxis`) are created once in `initGrid()` and appended to a persistent group. On each `_render()`, path data strings are built as `M x,y L x,y` concatenations and set via a single `setAttribute('d', ...)` call per path. No DOM nodes are created or destroyed during pan/zoom.
+
+**Result:** DOM element count during grid render drops from ~810 created+destroyed per frame to 3 attribute writes. Labels (`<text>` elements) are still recreated each frame but their count is capped to ~5–15 visible major-line labels — acceptable.
+
+**Files:** `js/layers/grid.js` — complete rewrite of `_render()`, `initGrid()`, `setGridEnabled()`; removed `_line()` helper (no longer needed); added `_makePath()` helper.
+
+---
+
+### Fix 2 — `redraw()` layer isolation (`js/app.js`)
+
+**Root cause (Gemini CRITICAL-A1 / GPT H3):** `redraw()` called all layer update functions in sequence with no per-call error handling. If any single call threw (e.g. `updateSunPathDay`, `updateShadow`, `syncChrome`), the rest of the frame's updates were skipped — leaving the UI in a partially-rendered state until the next state change. The outer try/catch in `subscribeAll` caught the error and showed a toast, but the remaining updates for that frame were lost.
+
+**Fixes applied:**
+1. **NaN observer guard**: Added at the top of `redraw()` — if `s.observer.lat` or `.lon` is not finite, return immediately. Prevents the entire update pipeline from running against garbage coordinates (e.g. from a malformed URL hash).
+2. **Per-layer try/catch**: `updateSunPathDay`, `updateReflectionDay`, `updateSunNow`, `updateReflectionNow`, `updateShadow`, `syncChrome`, `updateCameraView`, and `setTarget` are each wrapped in their own `try/catch`. A failure in one layer no longer prevents the others from updating. All caught errors are forwarded to `captureError()` for the monitor ring buffer.
+
+**File:** `js/app.js` — `redraw()` function.
+
+---
+
+### Fix 3 — Drift loop guards (`js/app.js`)
+
+**Root cause (Gemini MEDIUM-2 / AUDIT.md known risk):** Two issues in the idle drift system:
+1. `_driftFrame()` called `map.setBearing()` and `map.setPitch()` without try/catch. MapLibre can throw for out-of-range or invalid values (e.g. if the map is in a destroyed state during teardown), which would propagate as an unhandled exception from inside a `requestAnimationFrame` callback.
+2. `_startDrift()` could start a drift oscillation on top of an in-progress `flyTo` or `easeTo` (e.g. after grid mode entry/exit), causing the animations to fight each other.
+
+**Fixes:**
+- `_driftFrame()`: wrapped both `map.setBearing()` and `map.setPitch()` in `try/catch {}`. Errors are silently swallowed since a failed frame in the drift loop is inconsequential — the next RAF tick will try again.
+- `_startDrift()`: added `if (map.isMoving && map.isMoving()) return;` guard before starting the RAF loop. This prevents drift from starting during active programmatic animations.
+
+**File:** `js/app.js` — `_driftFrame()` and `_startDrift()` functions.
+
+---
+
+### Note on share.js NaN propagation
+
+The GPT-5 mini audit (C3) and the internal AUDIT.md (Part 9 "Remaining known risks") both flagged `share.js` as potentially propagating NaN observer coordinates from malformed URL hashes. **On inspection, this was already fixed:** `decodeHashToState()` guards both `ll` and `tg` with `Number.isFinite(lat) && Number.isFinite(lon)` before assigning to state. The `redraw()` NaN guard added in Fix 2 provides an additional defence-in-depth layer in case any other code path sets a non-finite observer.
+
+---
+
+### Files changed
+- `js/layers/grid.js` — render path rewrite (persistent paths)
+- `js/app.js` — `redraw()` isolation, `_driftFrame()` guard, `_startDrift()` guard
+- `sw.js` — cache bumped `v45` → `v46`
+- `index.html` — asset strings bumped to `?v=46`
+
+
+---
+
+## Part 18 — v47: Bug fixes + DATA panel + Alignment wizard + UI polish (2026-05-08)
+
+### Bugs fixed
+
+**Bug 1 — Orange ray line disappears when caster height = 0 (`js/layers/shadow.js`)**
+`renderOverlay()` returned early with `lineSky opacity=0` whenever `!endMarker` (i.e. caster = 0, no shadow endpoint). This hid the body→observer light ray even when the body was above the horizon.
+
+Fix: when `!endMarker`, retrieve the live body anchor and draw a 2-point sky line from body screen position to `casterTopScreen` (which equals `groundScreen` when caster = 0). The light ray is now always visible whenever the body is above the horizon, regardless of whether a shadow endpoint exists.
+
+**Bug 2 — Map reload goes to last camera position instead of observer (`js/app.js`)**
+`initMap()` correctly initialises map center at `init.observer`, but if the user panned the map away from the observer pin before closing, the pan position was retained in memory. On reload the map showed the last panned location rather than the observer.
+
+Fix: added `map.jumpTo({ center: [init.observer.lon, init.observer.lat] })` immediately after `await whenStyleReady(map)`. The map always opens centered on the observer.
+
+**Bug 3 — Grid mode hides SR/SS/RAY ground lines (`js/layers/sun-path.js`)**
+`body.grid-mode .maplibregl-canvas { opacity: 0 }` hides the entire MapLibre canvas, including the sunrise/sunset vector lines (SR_LINE, SS_LINE) and ray line (RAY_LINE), which are MapLibre GL layers rendered on the canvas.
+
+Fix: added a separate SVG overlay (`gridLinesSvg`) in `sun-path.js` containing three persistent `<line>` elements mirroring SR/SS/RAY. `setLine()` now caches the last coordinates for each source. A `map.on('render', _renderGridLines)` handler reprojects cached coordinates using `map.project()` on each frame. `setGridModeLines(active)` shows/hides this SVG, called from `_enterGrid`/`_exitGrid` in `app.js`.
+
+---
+
+### CSS / UI fixes
+
+**Fix 4 — Caster/floor slider label alignment (`css/style.css`)**
+Added `margin: 0; padding: 0; align-self: center;` to `.elev-row input[type=range]` to fix vertical centering on iOS where the range input could add unexpected margins.
+
+**Fix 5 — Radius slider overlaps dock on mobile (`css/style.css`)**
+Increased the bottom clearance buffer from 280px to 305px in `.vslider.radius height: calc(67vh - 305px - var(--safe-bottom))`. The shadow elevation panel is always visible in map mode, adding ~100px to the dock's height; the old value of 280px was borderline and caused the slider bottom to overlap the dock on shorter phones.
+
+**Fix 6 — Grid mode shadow slider rescale (`js/app.js`)**
+On grid entry: shadow/floor slider max is changed from 1000 to 10 (metres), step to 0.1; values reset to 0. `sliderToHeight`/`heightToSlider` switch to a linear 0–10 m mapping when `_gridShadowMode = true`.
+On grid exit: max/step restored to 1000/1, saved pre-entry values restored.
+
+---
+
+### New features
+
+**Feature 7+8 — DATA button and panel (`index.html`, `css/style.css`, `js/app.js`)**
+Replaced the clock/reminder button (`#reminder-btn`) with a DATA button (`#data-btn`). Tapping opens a glass panel above the dock showing:
+- Row 1: white dot icon · observer lat, lon · caster height
+- Row 2: orange or green dot icon · shadow endpoint lat, lon · height (green dot preferred when floor > 0)
+- "Find Alignment" button that opens the alignment wizard
+
+**Feature 9 — Alignment wizard (`index.html`, `css/style.css`, `js/app.js`, `js/alignment.js`)**
+Two-step mode to find when the sun or moon aligns between two user-defined points:
+- Step A: pre-filled from current observer lat/lon and caster height; user can tap map to adjust position; height editable via number input
+- Step B: user taps map to set target point; height editable
+- Search: `findAlignmentBetweenPoints()` scans forward in 5-minute steps for up to 1 year; checks both azimuth and altitude within ±1° tolerance
+- Match: scrubber jumps to the result datetime; toast shows date + time
+- Map click handler in `app.js` is intercepted during `_alignStep === 'a'` or `'b'`
+
+New function in `alignment.js`:
+```js
+export function findAlignmentBetweenPoints(pointA, pointB, fromDate, moonMode, toleranceDeg)
+```
+Uses `haversineM()` for distance, `compassBearing()` for required azimuth, `atan2(hDiff, dist)` for required altitude. Imports `getMoonPos` and `bearing` from existing modules.
+
+**Feature 10 — Tap time display to set exact time (`js/app.js`)**
+Tapping `#time-hh` creates a hidden `<input type="time">` and programmatically clicks it (native time picker on all platforms). On change, updates `store.datetime` with the new hours/minutes on the current date. Cursor set to `pointer` and `:active` opacity added.
+
+---
+
+### Files changed
+- `js/layers/shadow.js` — Bug 1 fix; added `getShadowEndLngLat()`, `getFloorDotLngLat()` exports
+- `js/layers/sun-path.js` — Bug 3 fix: grid SVG overlay, `setGridModeLines()` export, `setLine()` coord cache
+- `js/app.js` — Bug 2 fix; grid rescale; DATA panel; alignment wizard; time tap; updated imports
+- `js/alignment.js` — Added `findAlignmentBetweenPoints()`, `haversineM()`, `getMoonPos` import
+- `css/style.css` — Fixes 4, 5; DATA panel styles; alignment wizard styles; time-hh cursor
+- `index.html` — DATA btn, data panel, alignment wizard HTML; bumped to `?v=47`
+- `sw.js` — Cache bumped `v46` → `v47`

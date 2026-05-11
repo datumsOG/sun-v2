@@ -30,17 +30,15 @@ The main use case is light planning for photography — knowing exactly when and
 | Drop line | Vertical line from each arc dot to its ground anchor |
 | Time scrubber | Drag across the day; moon mode syncs to the visible moon window |
 | Date picker | Native date picker button next to the time display |
-| Altitude / azimuth | Live readout in the time row |
-| Rise / set times | Shows current body rise and set |
+| Altitude readout | Live `↑7.3°` / `↓2.1°` vertical angle shown in the time row |
 | Arc radius slider | Right-edge vertical slider, log curve 20 m → 50 km |
 | Map tilt slider | Right-edge vertical slider, 0–75° pitch |
 | Reflection mode | Hold and drag to draw a building face; incident + reflected rays shown |
-| Compass mode | Device orientation rotates the map bearing; two-finger pinch = zoom only |
+| Compass mode | Device orientation drives bearing + pitch; map pan still free; centers on observer on activate |
 | Invert map | Toggles CSS `invert` filter on the map canvas |
 | Geocoding | Photon / Komoot (no key required) |
-| Share button | Web Share API or clipboard fallback |
-| Reminder button | Saves current location + time + mode to localStorage; notifies on next open |
-| Target pin | Tap the map to drop an observer pin; long-press removed (was alignment finder) |
+| Alignment search | Magnifying-glass button; finds next date+time when sun/moon aligns two map points at their set heights; ±1.5° tolerance |
+| Target pin | Tap the map to drop an observer pin |
 
 ### Shadow mode (always on)
 
@@ -61,15 +59,6 @@ The shadow panel shows in map mode at all times.
 Shadow hides entirely when: floor ≥ caster, body below 0.5°, or shadow distance > 4 km.
 
 **Height inputs:** Each row has a log-curve range slider (0–1000 m) plus a tap-to-edit number field. Tap the number to type an exact metre value; the slider snaps to the nearest position.
-
-### Camera / AR view
-
-- Rear camera feed
-- Sun or moon disk overlay, positioned using device orientation sensors
-- Off-screen guide arrow when body is behind you
-- AR overlay: arc dots, caster sphere, shadow line — all in 3D perspective
-- **Align** button: corrects heading offset by aligning the computed body azimuth to the current sensor reading
-- **Capture** button: saves a PNG with overlaid date/time, lat/lon, azimuth, elevation
 
 ### Persistence
 
@@ -185,7 +174,7 @@ After any JS/CSS/HTML change, bump the cache version string in `sw.js` and the `
   sunDatetime:       Date,               // last sun-mode time (restored on mode switch)
   moonDatetime:      Date | null,        // last moon-mode time
   mode:              'sun' | 'moon',
-  view:              'map' | 'camera',
+  view:              'map' | 'camera',   // camera UI button hidden; always 'map' currently
   shadowEnabled:     true,               // always true (toggle removed)
   reflectionEnabled: boolean,
   compassEnabled:    boolean,
@@ -197,10 +186,21 @@ After any JS/CSS/HTML change, bump the cache version string in `sw.js` and the `
 
 ---
 
+## Alignment search
+
+The magnifying-glass button opens a two-step wizard:
+1. **Caster** (Point A) — pre-fills from current observer position + caster height. Tap map to adjust.
+2. **Target** (Point B) — tap map to set. Pre-fills floor height.
+
+Search finds the next datetime (within one year) when the sun/moon is simultaneously at the bearing from A→B and the altitude that matches the height difference between the two points. If the caster is taller than the target (shadow-casting case), the search automatically flips to find the sun at bearing B→A at the equivalent positive altitude.
+
+**Tolerance:** ±1.5° for both azimuth and altitude. Adjustable via `toleranceDeg` parameter in `alignment.js`.
+
+---
+
 ## Known limitations
 
-- **Terrain not modelled.** Rise/set times assume a flat horizon. Mountains would require elevation API integration.
 - **Reflection mode is 2D only.** The reflected ray is a pure azimuth mirror with no elevation component.
-- **AR heading on Android.** `deviceorientation` (non-absolute) uses `360 - alpha` as a compass heading approximation and can drift. Tap **Align** to correct it.
 - **Shadow cap at 4 km.** When the shadow would extend beyond 4 km (very low sun angle), it is hidden rather than shown truncated. This prevents misleading geometry at the cost of no display near sunrise/sunset with tall casters.
 - **`project3D` approximation.** The flat-earth projection is accurate for typical use (caster heights up to ~1 km, arc radius up to a few km) but accumulates error at extreme parameters. The polyline waypoint approach compensates for this in the sky line.
+- **Camera / AR view** is implemented in `js/ui/arrow-view.js` but the UI button is hidden pending a future UX pass.

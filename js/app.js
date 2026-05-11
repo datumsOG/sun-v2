@@ -3,20 +3,21 @@
 import * as store from './state.js';
 import { initMap, whenStyleReady } from './map.js';
 import { addObserverLayer, setObserver } from './layers/observer.js';
-import { addSunPathLayer, updateSunPathDay, updateSunNow, setSunPathVisible, setRayLineVisible, setBodyColor, setArcRadiusKm, getArcSamples, getArcRadiusKm } from './layers/sun-path.js';
+import { addSunPathLayer, updateSunPathDay, updateSunNow, setSunPathVisible, setRayLineVisible, setBodyColor, setArcRadiusKm, getArcSamples, getArcRadiusKm, setGridModeLines } from './layers/sun-path.js';
 import { addReflectionLayer, updateReflectionDay, updateReflectionNow, updateReflectionWall, setReflectionVisible } from './layers/reflection.js';
 import { addTargetLayer, setTarget } from './layers/target.js';
-import { addShadowLayer, updateShadow, setShadowVisible, setShadowHeight, setFloorHeight } from './layers/shadow.js';
+import { addShadowLayer, updateShadow, setShadowVisible, setShadowHeight, setFloorHeight, getShadowHeight, getFloorHeight, getShadowEndLngLat, getFloorDotLngLat } from './layers/shadow.js';
 import { initScrubber, renderScrubberTicks, setMoonPhaseMarker, setScrubberRange } from './ui/scrubber.js';
 import { initSearch } from './ui/search.js';
 import { enableCompass, disableCompass } from './ui/sensor.js';
 import { attachHashSync } from './share.js';
 import { getPosition, getMoonPos, getMoonIllumination, getMoonTimes } from './solar.js';
-import { findNextAlignment } from './alignment.js';
-import { bearing, formatTime, formatDate, throttleRaf, startOfLocalDay } from './util.js';
+import { findNextAlignment, findAlignmentBetweenPoints } from './alignment.js';
+import { bearing, formatTime, formatDate, throttleRaf, startOfLocalDay, project3D } from './util.js';
 import { initCameraView, showCameraView, hideCameraView, updateCameraView } from './ui/arrow-view.js';
-import { checkAndNotify, saveReminder } from './reminders.js';
+import { checkAndNotify } from './reminders.js';
 import { initMonitor, captureError } from './monitor.js';
+import { initGrid, setGridEnabled, setGridObserver, setGridImperial } from './layers/grid.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -27,24 +28,19 @@ const dom = {
   scrubber: $('scrubber'),
   scrubberTicks: $('scrubber-ticks'),
   moonPhaseMarker: $('moon-phase-marker'),
-  sunAlt: $('sun-alt'),
   hh: $('time-hh'),
   dateBtn: $('date-btn'),
   dateLabel: $('date-label'),
   dateInput: $('date-input'),
-  riseLabel: $('rise-label'),
-  setLabel: $('set-label'),
   bodyToggle: $('body-toggle'),
   bodyIconSun: $('body-icon-sun'),
   bodyIconMoon: $('body-icon-moon'),
-  viewToggle: $('view-toggle'),
-  viewIconCamera: $('view-icon-camera'),
-  viewIconMap: $('view-icon-map'),
+  sunAlt: $('sun-alt'),
   locateBtn: $('locate-btn'),
   compassToggle: $('compass-toggle'),
   reflectionToggle: $('reflection-toggle'),
-  reminderBtn: $('reminder-btn'),
-  shareBtn: $('share-btn'),
+  dataBtn: $('data-btn'),
+  alignWizardBtn: $('align-wizard-btn'),
   shadowElevPanel: $('shadow-elev-panel'),
   shadowElev: $('shadow-elev'),
   shadowElevVal: $('shadow-elev-val'),
@@ -53,6 +49,16 @@ const dom = {
   toast: $('toast'),
   tiltSlider: $('tilt-slider'),
   radiusSlider: $('radius-slider'),
+  alignPanel: $('align-panel'),
+  alignACoords: $('align-a-coords'),
+  alignAHeight: $('align-a-height'),
+  alignAConfirm: $('align-a-confirm'),
+  alignBCoords: $('align-b-coords'),
+  alignBHeight: $('align-b-height'),
+  alignSearchBtn: $('align-search-btn'),
+  alignClose: $('align-close'),
+  alignStepA: $('align-step-a'),
+  alignStepB: $('align-step-b'),
 };
 
 let map;
@@ -60,9 +66,152 @@ let lastDayKey = null;
 let lastObserverKey = null;
 let reflectionLine = null;
 
+// Idle perspective drift — gentle bearing+pitch oscillation when map is static.
+let _driftRafId = null;
+let _driftBaseBearing = 0;
+let _driftBasePitch = 55;
+let _driftT0 = 0;
+let _lastInteract = Date.now();
+const DRIFT_IDLE_MS = 4000; // start after 4 s of no interaction
+
+function _driftFrame(ts) {
+  if (!map) { _driftRafId = null; return; }
+  const s = store.get();
+  if (s.view === 'camera' || s.compassEnabled) { _driftRafId = null; return; }
+  const t = (ts - _driftT0) / 1000;
+  const bear = _driftBaseBearing + 2.0 * Math.sin(2 * Math.PI * t / 16);
+  const pitch = _driftBasePitch + 1.5 * Math.sin(2 * Math.PI * t / 22);
+  try { map.setBearing(bear); } catch {}
+  try { map.setPitch(pitch); } catch {}
+  _driftRafId = requestAnimationFrame(_driftFrame);
+}
+
+function stopDrift() {
+  if (_driftRafId) {
+    cancelAnimationFrame(_driftRafId);
+    _driftRafId = null;
+    if (map) map.easeTo({ bearing: _driftBaseBearing, pitch: _driftBasePitch, duration: 600, easing: (t) => t < 0.5 ? 2*t*t : -1+(4-2*t)*t });
+  }
+  _lastInteract = Date.now();
+}
+
+// Grid mode state
+let _gridActive = false;
+let _gridImperial = localStorage.getItem('sun_grid_unit') === 'imperial';
+let _savedRadiusSliderValue = null;
+// Grid mode rescales shadow sliders to 0–10 m linear for human-scale work.
+let _gridShadowMode = false;
+let _savedShadowH = null;   // raw slider value before grid entry
+let _savedFloorH  = null;
+
+// After flyTo settles, rebuild day-level arc + live body so they reproject
+// against the new zoom/centre. project3D depends on camera altitude, which
+// changes drastically with zoom — without this, dots collapse to ground.
+function _refreshLayers(map) {
+  const cur = store.get();
+  try {
+    updateSunPathDay(map, cur.observer, cur.datetime, cur.mode === 'moon');
+    updateSunNow(map, cur.observer, cur.datetime,
+      cur.mode === 'moon' ? getMoonPos(cur.datetime, cur.observer.lat, cur.observer.lon) : null);
+  } catch (e) { console.error('layer refresh failed', e); }
+}
+
+function _enterGrid(map, s) {
+  _gridActive = true;
+  stopDrift();
+  setGridObserver(s.observer.lat, s.observer.lon);
+  setGridImperial(_gridImperial);
+  document.body.classList.add('grid-mode');
+  setGridEnabled(true);
+  setGridModeLines(true);
+
+  // Rescale shadow sliders to 0–10 m linear for human-scale work.
+  _gridShadowMode = true;
+  if (dom.shadowElev) {
+    _savedShadowH = dom.shadowElev.value;
+    dom.shadowElev.max = '10'; dom.shadowElev.step = '0.1'; dom.shadowElev.value = '0';
+    setShadowHeight(0);
+    if (dom.shadowElevVal) dom.shadowElevVal.value = '0';
+  }
+  if (dom.floorElev) {
+    _savedFloorH = dom.floorElev.value;
+    dom.floorElev.max = '10'; dom.floorElev.step = '0.1'; dom.floorElev.value = '0';
+    setFloorHeight(0);
+    if (dom.floorElevVal) dom.floorElevVal.value = '0';
+  }
+
+  // Save current radius slider value; force a backyard-scale arc (10 m) so
+  // all arc altitudes stay below camera altitude at the entry zoom.
+  if (dom.radiusSlider) _savedRadiusSliderValue = dom.radiusSlider.value;
+  setArcRadiusKm(0.01);
+
+  map.flyTo({
+    center: [s.observer.lon, s.observer.lat],
+    zoom: 21, // ~21 m wide; camera ≈ 54 m AGL, well above 10 m arc apex
+    pitch: map.getPitch(),
+    bearing: map.getBearing(),
+    duration: 1200,
+  });
+  map.once('moveend', () => { if (_gridActive) _refreshLayers(map); });
+}
+
+function _exitGrid(map) {
+  _gridActive = false;
+  document.body.classList.remove('grid-mode');
+  setGridEnabled(false);
+  setGridModeLines(false);
+
+  // Restore shadow sliders to full 0–1000 m log-curve range.
+  _gridShadowMode = false;
+  if (dom.shadowElev) {
+    dom.shadowElev.max = '1000'; dom.shadowElev.step = '1';
+    if (_savedShadowH != null) {
+      dom.shadowElev.value = _savedShadowH;
+      const h = sliderToHeight(_savedShadowH);
+      setShadowHeight(h);
+      if (dom.shadowElevVal) dom.shadowElevVal.value = String(h);
+    }
+    _savedShadowH = null;
+  }
+  if (dom.floorElev) {
+    dom.floorElev.max = '1000'; dom.floorElev.step = '1';
+    if (_savedFloorH != null) {
+      dom.floorElev.value = _savedFloorH;
+      const h = sliderToHeight(_savedFloorH);
+      setFloorHeight(h);
+      if (dom.floorElevVal) dom.floorElevVal.value = String(h);
+    }
+    _savedFloorH = null;
+  }
+
+  // Restore the user's arc radius from their slider position.
+  if (_savedRadiusSliderValue != null && dom.radiusSlider) {
+    dom.radiusSlider.value = _savedRadiusSliderValue;
+    setArcRadiusKm(sliderToRadiusKm(_savedRadiusSliderValue));
+    _savedRadiusSliderValue = null;
+  }
+
+  map.flyTo({ zoom: 14, duration: 800 });
+  map.once('moveend', () => _refreshLayers(map));
+}
+
+function _startDrift() {
+  if (_driftRafId) return;
+  const s = store.get();
+  if (s.view === 'camera' || s.compassEnabled) return;
+  // Don't start drift while a flyTo/easeTo is in progress — would conflict
+  if (map.isMoving && map.isMoving()) return;
+  _driftBaseBearing = map.getBearing();
+  _driftBasePitch = map.getPitch();
+  _driftT0 = performance.now();
+  _driftRafId = requestAnimationFrame(_driftFrame);
+}
+
 // Map slider value 0..1000 to height 0..1000 m on a log curve (default 333 → ~10 m).
 // 0 → 0 m exactly, otherwise log-curved from 1 m up to 1000 m.
+// In grid mode, sliders are rescaled to 0–10 m linear (slider value = metres).
 function sliderToHeight(v) {
+  if (_gridShadowMode) return Math.round(+v * 10) / 10;  // 0–10 linear
   const n = +v;
   if (n <= 0) return 0;
   const t = Math.min(1, n / 1000);
@@ -70,6 +219,7 @@ function sliderToHeight(v) {
 }
 // Inverse: metres → slider value (for syncing the number input back to the slider).
 function heightToSlider(h) {
+  if (_gridShadowMode) return Math.max(0, Math.min(10, +h));
   if (h <= 0) return 0;
   const clamped = Math.max(1, Math.min(1000, h));
   return Math.max(1, Math.min(1000, Math.round(1000 * Math.log(clamped) / Math.log(1000))));
@@ -79,6 +229,173 @@ function sliderToRadiusKm(v) {
   const t = Math.max(0, Math.min(1, +v / 1000));
   // log range: 0.02 km → 50 km. ratio = 50/0.02 = 2500.
   return 0.02 * Math.pow(2500, t);
+}
+
+// ── Alignment wizard ────────────────────────────────────────────────────────
+let _alignStep = null;   // null | 'a' | 'b'
+let _alignA = null;      // {lat, lon, height}
+let _alignB = null;      // {lat, lon, height}
+
+function _fmtCoords(pt) {
+  if (!pt) return '—';
+  return `${pt.lat.toFixed(5)}, ${pt.lon.toFixed(5)}`;
+}
+
+function _updateAlignADisplay() {
+  if (!dom.alignACoords || !_alignA) return;
+  dom.alignACoords.textContent = _fmtCoords(_alignA);
+}
+
+function _updateAlignBDisplay() {
+  if (!dom.alignBCoords || !_alignB) return;
+  dom.alignBCoords.textContent = _fmtCoords(_alignB);
+}
+
+function _openAlignWizard() {
+  if (!dom.alignPanel) return;
+  if (dom.alignWizardBtn) { dom.alignWizardBtn.classList.add('active'); dom.alignWizardBtn.setAttribute('aria-pressed', 'true'); }
+  const s = store.get();
+  _alignStep = 'a';
+  const casterH = getShadowHeight();
+  const floorH  = getFloorHeight();
+  _alignA = { lat: s.observer.lat, lon: s.observer.lon, height: casterH };
+  _alignB = null;
+  _updateAlignADisplay();
+  if (dom.alignAHeight) dom.alignAHeight.value = String(casterH);
+  if (dom.alignBCoords) dom.alignBCoords.textContent = 'Tap map to set';
+  if (dom.alignBHeight) dom.alignBHeight.value = String(floorH);
+  if (dom.alignSearchBtn) dom.alignSearchBtn.disabled = true;
+  if (dom.alignStepA) dom.alignStepA.hidden = false;
+  if (dom.alignStepB) dom.alignStepB.hidden = true;
+  dom.alignPanel.hidden = false;
+  showToast('Tap map to adjust Point A, or confirm as-is');
+}
+
+function _closeAlignWizard() {
+  _alignStep = null;
+  _alignA = null;
+  _alignB = null;
+  if (dom.alignPanel) dom.alignPanel.hidden = true;
+  if (dom.alignWizardBtn) { dom.alignWizardBtn.classList.remove('active'); dom.alignWizardBtn.setAttribute('aria-pressed', 'false'); }
+}
+
+function _runAlignmentSearch() {
+  if (!_alignA || !_alignB) return;
+  // Sync heights from inputs in case user typed without tapping map again.
+  if (dom.alignAHeight) _alignA.height = parseFloat(dom.alignAHeight.value) || 0;
+  if (dom.alignBHeight) _alignB.height = parseFloat(dom.alignBHeight.value) || 0;
+  const s = store.get();
+  const moonMode = s.mode === 'moon';
+  if (dom.alignSearchBtn) dom.alignSearchBtn.textContent = 'Searching…';
+  setTimeout(() => {
+    const result = findAlignmentBetweenPoints(_alignA, _alignB, s.datetime, moonMode);
+    if (dom.alignSearchBtn) dom.alignSearchBtn.textContent = 'Search';
+    if (!result) {
+      const reqAz = bearing(_alignA.lat, _alignA.lon, _alignB.lat, _alignB.lon).toFixed(1);
+      showToast(`No alignment found — need sun/moon at bearing ${reqAz}°`);
+      return;
+    }
+    _closeAlignWizard();
+    store.set({ datetime: result.datetime });
+    const dateStr = formatDate(result.datetime);
+    const timeStr = formatTime(result.datetime);
+    showToast(`Aligned: ${dateStr} ${timeStr}`);
+  }, 0);
+}
+
+// ── Coord label overlays (DATA mode) ────────────────────────────────────────
+let _dataActive = false;
+let _coordLabelObserver  = null;
+let _coordLabelShadow    = null;
+let _coordLabelCaster    = null;
+let _coordLabelDatetime  = null;
+let _coordLabelEndHeight = null;
+
+function _initCoordLabels(mapInstance) {
+  const makeLabel = () => {
+    const el = document.createElement('div');
+    el.className = 'coord-label';
+    el.hidden = true;
+    document.body.appendChild(el);
+    return el;
+  };
+  _coordLabelObserver  = makeLabel();
+  _coordLabelShadow    = makeLabel();
+  _coordLabelCaster    = makeLabel();
+  _coordLabelDatetime  = makeLabel();
+  _coordLabelEndHeight = makeLabel();
+
+  mapInstance.on('render', () => {
+    if (!_dataActive) return;
+    const s = store.get();
+    if (!s.observer) return;
+
+    const obsScr = mapInstance.project([s.observer.lon, s.observer.lat]);
+
+    // Observer label (white dot) — lat/lon below the dot
+    if (Number.isFinite(obsScr.x)) {
+      _coordLabelObserver.style.left = (obsScr.x + 14) + 'px';
+      _coordLabelObserver.style.top  = (obsScr.y + 4) + 'px';
+      _coordLabelObserver.textContent = `${s.observer.lat.toFixed(5)}, ${s.observer.lon.toFixed(5)}`;
+      _coordLabelObserver.hidden = false;
+    }
+
+    // Caster (blue dot) height label + datetime above it
+    const casterH = getShadowHeight();
+    const casterScr = casterH > 0.01
+      ? project3D(mapInstance, s.observer.lon, s.observer.lat, casterH)
+      : obsScr;
+    if (Number.isFinite(casterScr.x)) {
+      _coordLabelDatetime.style.left = (casterScr.x + 14) + 'px';
+      _coordLabelDatetime.style.top  = (casterScr.y - 32) + 'px';
+      _coordLabelDatetime.textContent = `${formatDate(s.datetime)} ${formatTime(s.datetime)}`;
+      _coordLabelDatetime.hidden = false;
+
+      if (casterH > 0.01) {
+        _coordLabelCaster.style.left = (casterScr.x + 14) + 'px';
+        _coordLabelCaster.style.top  = (casterScr.y - 12) + 'px';
+        _coordLabelCaster.textContent = `${casterH}m`;
+        _coordLabelCaster.hidden = false;
+      } else {
+        _coordLabelCaster.hidden = true;
+      }
+    }
+
+    // Shadow/floor dot label — green dot (ground-level coords)
+    const floorPt = getFloorDotLngLat();
+    const endPt   = getShadowEndLngLat();
+    const pt = floorPt || endPt;
+    if (pt) {
+      const scr = mapInstance.project([pt.lon, pt.lat]);
+      if (Number.isFinite(scr.x)) {
+        _coordLabelShadow.style.left = (scr.x + 14) + 'px';
+        _coordLabelShadow.style.top  = (scr.y + 4) + 'px';
+        _coordLabelShadow.textContent = `${pt.lat.toFixed(5)}, ${pt.lon.toFixed(5)}`;
+        _coordLabelShadow.hidden = false;
+      } else {
+        _coordLabelShadow.hidden = true;
+      }
+    } else {
+      _coordLabelShadow.hidden = true;
+    }
+
+    // Elevated yellow dot (endMarker) height label — shown only when floor > 0
+    const endPt2 = getShadowEndLngLat();
+    const floorH = getFloorHeight();
+    if (endPt2 && floorH > 0.01) {
+      const elevScr = project3D(mapInstance, endPt2.lon, endPt2.lat, floorH);
+      if (Number.isFinite(elevScr.x)) {
+        _coordLabelEndHeight.style.left = (elevScr.x + 14) + 'px';
+        _coordLabelEndHeight.style.top  = (elevScr.y - 8) + 'px';
+        _coordLabelEndHeight.textContent = `${floorH}m`;
+        _coordLabelEndHeight.hidden = false;
+      } else {
+        _coordLabelEndHeight.hidden = true;
+      }
+    } else {
+      _coordLabelEndHeight.hidden = true;
+    }
+  });
 }
 
 async function main() {
@@ -93,18 +410,24 @@ async function main() {
   const init = store.get();
   map = initMap(dom.map, init.observer);
   await whenStyleReady(map);
+  // Always center on the observer at startup — the map may have drifted if the
+  // user panned without moving the observer pin before last closing the app.
+  try { map.jumpTo({ center: [init.observer.lon, init.observer.lat] }); } catch {}
 
   // Try each layer add separately so a bad layer doesn't kill all overlays.
   const safe = (label, fn) => {
     try { fn(); } catch (e) { console.error(label, e); showToast(label + ': ' + e.message); }
   };
+  map.addControl(new maplibregl.ScaleControl({ maxWidth: 80, unit: 'metric' }), 'bottom-left');
   safe('observer', () => addObserverLayer(map, init.observer.lat, init.observer.lon));
   safe('sun-path', () => addSunPathLayer(map));
   safe('reflection', () => addReflectionLayer(map));
   safe('target', () => addTargetLayer(map));
   safe('shadow', () => addShadowLayer(map));
   safe('camera', () => initCameraView());
+  safe('grid',   () => initGrid(map));
 
+  _initCoordLabels(map);
   const due = checkAndNotify();
   if (due.length && Notification.permission !== 'granted') {
     showToast(`Reminder: ${due[0].mode} shot at ${formatTime(new Date(due[0].datetime))}`);
@@ -114,7 +437,21 @@ async function main() {
   map.on('click', (e) => {
     if (store.get().reflectionEnabled) return;
     if (suppressClick) { suppressClick = false; return; }
-    if (e.originalEvent && e.originalEvent.target && e.originalEvent.target.closest('#dock,#search-results,#cam-hud')) return;
+    if (e.originalEvent && e.originalEvent.target && e.originalEvent.target.closest('#dock,#search-results,#cam-hud,#data-panel,#align-panel')) return;
+
+    // Alignment wizard intercepts taps for point A/B selection.
+    if (_alignStep === 'a') {
+      _alignA = { lat: e.lngLat.lat, lon: e.lngLat.lng, height: parseFloat(dom.alignAHeight?.value) || 0 };
+      _updateAlignADisplay();
+      return;
+    }
+    if (_alignStep === 'b') {
+      _alignB = { lat: e.lngLat.lat, lon: e.lngLat.lng, height: parseFloat(dom.alignBHeight?.value) || 0 };
+      _updateAlignBDisplay();
+      if (dom.alignSearchBtn) dom.alignSearchBtn.disabled = false;
+      return;
+    }
+
     store.set({ observer: { lat: e.lngLat.lat, lon: e.lngLat.lng } });
   });
 
@@ -162,10 +499,40 @@ async function main() {
     store.set(update);
   });
 
-  // View toggle: map ↔ camera.
-  dom.viewToggle.addEventListener('click', () => {
-    const next = store.get().view === 'map' ? 'camera' : 'map';
-    store.set({ view: next });
+  // Grid mode toggle
+  const gridBtn = document.getElementById('grid-toggle');
+  const unitBtn = document.getElementById('unit-toggle');
+
+  function _syncUnitBtn() {
+    if (unitBtn) unitBtn.textContent = _gridImperial ? 'ft' : 'm';
+  }
+  _syncUnitBtn();
+
+  if (gridBtn) {
+    gridBtn.addEventListener('click', () => {
+      if (_gridActive) {
+        _exitGrid(map);
+        gridBtn.classList.remove('active');
+        gridBtn.setAttribute('aria-pressed', 'false');
+      } else {
+        _enterGrid(map, store.get());
+        gridBtn.classList.add('active');
+        gridBtn.setAttribute('aria-pressed', 'true');
+      }
+    });
+  }
+  if (unitBtn) {
+    unitBtn.addEventListener('click', () => {
+      _gridImperial = !_gridImperial;
+      localStorage.setItem('sun_grid_unit', _gridImperial ? 'imperial' : 'metric');
+      setGridImperial(_gridImperial);
+      _syncUnitBtn();
+    });
+  }
+
+  // Keep grid centred on observer when observer changes
+  store.subscribe('observer', (obs) => {
+    if (_gridActive) setGridObserver(obs.lat, obs.lon);
   });
 
   dom.locateBtn.addEventListener('click', tryGeolocate);
@@ -187,10 +554,15 @@ async function main() {
         dom.compassToggle.setAttribute('aria-pressed', 'true');
         // Sensor drives bearing+pitch; disable manual rotation/pitch gestures so
         // two-finger pinch is interpreted purely as zoom (not rotate-or-pitch).
+        // dragPan stays enabled so the user can reposition the map freely.
+        try { map.dragPan.enable(); } catch {}
         try { map.dragRotate.disable(); } catch {}
         try { map.touchPitch && map.touchPitch.disable(); } catch {}
         try { map.touchZoomRotate.disableRotation(); } catch {}
-        showToast('Compass on — tilt phone to pitch, pinch to zoom');
+        // Center on observer so the bearing snap doesn't disorient.
+        const s = store.get();
+        map.easeTo({ center: [s.observer.lon, s.observer.lat], duration: 500 });
+        showToast('Compass on — pan freely, pinch to zoom');
       } else {
         showToast('Compass denied');
       }
@@ -268,10 +640,30 @@ async function main() {
     dom.radiusSlider.addEventListener('input', () => { applyRadius(); saveUI(); });
     applyRadius();
   }
-  // Sync tilt slider when user drags the map
+  // Sync tilt slider when user drags the map (skip during drift)
   map.on('pitch', () => {
+    if (_driftRafId) return;
     if (dom.tiltSlider) dom.tiltSlider.value = String(Math.round(map.getPitch()));
   });
+
+  // Idle drift — stop on any map interaction
+  const _onInteract = () => stopDrift();
+  map.getCanvas().addEventListener('mousedown', _onInteract, { passive: true });
+  map.getCanvas().addEventListener('touchstart', _onInteract, { passive: true });
+  map.getCanvas().addEventListener('wheel', _onInteract, { passive: true });
+  // Poll for idle; start drift after DRIFT_IDLE_MS of no interaction
+  setInterval(() => {
+    if (!_driftRafId && Date.now() - _lastInteract > DRIFT_IDLE_MS) _startDrift();
+  }, 1000);
+
+  // Top-of-screen pan guard: block single-touch map drag in top 28% of the screen.
+  // At high pitch, that zone maps to distant horizon where 1 mm of drag = kilometres.
+  // Multi-touch (pinch-to-zoom) and taps pass through unaffected.
+  map.getCanvas().addEventListener('touchmove', (e) => {
+    if (e.touches.length === 1 && e.touches[0].clientY < window.innerHeight * 0.28) {
+      e.stopImmediatePropagation();
+    }
+  }, { capture: true, passive: true });
 
   dom.reflectionToggle.addEventListener('click', () => {
     const s = store.get();
@@ -279,18 +671,60 @@ async function main() {
     store.set({ reflectionEnabled: !s.reflectionEnabled });
   });
 
-  dom.reminderBtn.addEventListener('click', () => {
-    const s = store.get();
-    saveReminder(s.observer, s.datetime, s.mode);
-    showToast('Reminder saved');
-  });
+  // DATA button: toggle coordinate labels beside dots on the map
+  if (dom.dataBtn) {
+    dom.dataBtn.addEventListener('click', () => {
+      _dataActive = !_dataActive;
+      dom.dataBtn.classList.toggle('active', _dataActive);
+      dom.dataBtn.setAttribute('aria-pressed', _dataActive ? 'true' : 'false');
+      if (!_dataActive) {
+        if (_coordLabelObserver)  _coordLabelObserver.hidden  = true;
+        if (_coordLabelShadow)    _coordLabelShadow.hidden    = true;
+        if (_coordLabelCaster)    _coordLabelCaster.hidden    = true;
+        if (_coordLabelDatetime)  _coordLabelDatetime.hidden  = true;
+        if (_coordLabelEndHeight) _coordLabelEndHeight.hidden = true;
+      }
+    });
+  }
 
-  dom.shareBtn.addEventListener('click', async () => {
-    try {
-      if (navigator.share) await navigator.share({ title: 'Sun', url: location.href });
-      else { await navigator.clipboard.writeText(location.href); showToast('Link copied'); }
-    } catch {}
-  });
+  // Alignment wizard: crosshair button on control row
+  if (dom.alignWizardBtn) {
+    dom.alignWizardBtn.addEventListener('click', () => {
+      if (!dom.alignPanel || !dom.alignPanel.hidden) {
+        _closeAlignWizard();
+      } else {
+        _openAlignWizard();
+      }
+    });
+  }
+  if (dom.alignClose) {
+    dom.alignClose.addEventListener('click', _closeAlignWizard);
+  }
+  if (dom.alignAConfirm) {
+    dom.alignAConfirm.addEventListener('click', () => {
+      // Accept Point A and move to Step B
+      _alignStep = 'b';
+      if (dom.alignStepA) dom.alignStepA.hidden = true;
+      if (dom.alignStepB) dom.alignStepB.hidden = false;
+      showToast('Tap map to set Point B');
+    });
+  }
+  if (dom.alignSearchBtn) {
+    dom.alignSearchBtn.addEventListener('click', _runAlignmentSearch);
+  }
+
+  // Transparent time input overlaid on #time-hh — native picker on direct tap
+  const timeExactInput = $('time-exact-input');
+  if (timeExactInput) {
+    timeExactInput.addEventListener('change', () => {
+      const [hh, mm] = (timeExactInput.value || '').split(':').map(Number);
+      if (!Number.isFinite(hh)) return;
+      const s = store.get();
+      const d = new Date(s.datetime);
+      d.setHours(hh, mm || 0, 0, 0);
+      store.set({ datetime: d });
+    });
+  }
 
   // Invert map colours
   const invertBtn = document.getElementById('invert-btn');
@@ -333,29 +767,35 @@ async function main() {
 
 
 function redraw(s, changed) {
-  const observerChanged = changed.includes('observer');
-  const modeChanged = changed.includes('mode');
-  const viewChanged = changed.includes('view');
-  const targetChanged = changed.includes('target');
-  const shadowChanged = changed.includes('shadowEnabled');
+  // Guard: skip entirely if observer coordinates are invalid (e.g. malformed hash)
+  if (!s.observer || !Number.isFinite(s.observer.lat) || !Number.isFinite(s.observer.lon)) return;
+
+  const observerChanged   = changed.includes('observer');
+  const modeChanged       = changed.includes('mode');
+  const viewChanged       = changed.includes('view');
+  const targetChanged     = changed.includes('target');
+  const shadowChanged     = changed.includes('shadowEnabled');
   const reflectionChanged = changed.includes('reflectionEnabled');
   const moonMode = s.mode === 'moon';
 
-  if (observerChanged) setObserver(map, s.observer.lat, s.observer.lon);
+  if (observerChanged) {
+    try { setObserver(map, s.observer.lat, s.observer.lon); } catch (e) { captureError(e, { phase: 'setObserver' }); }
+  }
 
-  // Day-level recompute
-  const dayKey = startOfLocalDay(s.datetime).toDateString();
+  // Day-level recompute — each call isolated so one failure doesn't block others
+  const dayKey      = startOfLocalDay(s.datetime).toDateString();
   const observerKey = `${s.observer.lat.toFixed(4)},${s.observer.lon.toFixed(4)}`;
   const dayLevelChanged = (dayKey !== lastDayKey) || (observerKey !== lastObserverKey);
   if (dayLevelChanged || observerChanged || modeChanged) {
-    const t = updateSunPathDay(map, s.observer, s.datetime, moonMode);
-    updateReflectionDay(map, s.observer, s.datetime);
+    let t = { rise: null, set: null };
+    try { t = updateSunPathDay(map, s.observer, s.datetime, moonMode); } catch (e) { captureError(e, { phase: 'sunPathDay' }); }
+    try { updateReflectionDay(map, s.observer, s.datetime); } catch (e) { captureError(e, { phase: 'reflectionDay' }); }
     // Sync scrubber range to active arc in moon mode (rise→set as 0..N minutes)
     setScrubberRange(
       { scrubber: dom.scrubber },
       moonMode ? 'moon' : 'sun',
       moonMode ? t.rise : null,
-      moonMode ? t.set : null,
+      moonMode ? t.set  : null,
     );
     renderScrubberTicks(dom.scrubberTicks, t.rise, t.set, s.datetime);
     updateRiseSet(s, t);
@@ -363,24 +803,24 @@ function redraw(s, changed) {
     lastObserverKey = observerKey;
   }
 
-  // Per-frame body position
+  // Per-frame body position — each layer isolated so one crash doesn't kill others
   const moonPos = moonMode ? getMoonPos(s.datetime, s.observer.lat, s.observer.lon) : null;
-  updateSunNow(map, s.observer, s.datetime, moonPos);
-  updateReflectionNow(map, s.observer, s.datetime, reflectionLine, moonMode);
-  if (s.shadowEnabled) updateShadow(map, s.observer, s.datetime, moonMode);
+  try { updateSunNow(map, s.observer, s.datetime, moonPos); } catch (e) { captureError(e, { phase: 'sunNow' }); }
+  try { updateReflectionNow(map, s.observer, s.datetime, reflectionLine, moonMode); } catch (e) { captureError(e, { phase: 'reflection' }); }
+  try { if (s.shadowEnabled) updateShadow(map, s.observer, s.datetime, moonMode); } catch (e) { captureError(e, { phase: 'shadow' }); }
   updateNowText(s);
   setMoonPhaseMarker(dom.moonPhaseMarker, moonMode ? getMoonIllumination(s.datetime) : null);
 
   if (modeChanged || viewChanged || shadowChanged || reflectionChanged) {
-    syncChrome(s);
+    try { syncChrome(s); } catch (e) { captureError(e, { phase: 'syncChrome' }); }
   }
 
   if (s.view === 'camera') {
-    updateCameraView(s.datetime, s.observer, moonMode);
+    try { updateCameraView(s.datetime, s.observer, moonMode); } catch (e) { captureError(e, { phase: 'cameraView' }); }
   }
 
   if (targetChanged || observerChanged) {
-    setTarget(map, s.observer, s.target);
+    try { setTarget(map, s.observer, s.target); } catch (e) { captureError(e, { phase: 'target' }); }
   }
 }
 
@@ -404,10 +844,6 @@ function syncChrome(s) {
   // Body icon: shows what you'd switch TO. In sun mode → show moon icon.
   if (dom.bodyIconSun)  dom.bodyIconSun.classList.toggle('hide', inSun);
   if (dom.bodyIconMoon) dom.bodyIconMoon.classList.toggle('hide', !inSun);
-
-  // View icon: shows what you'd switch TO. In map view → show camera icon.
-  if (dom.viewIconCamera) dom.viewIconCamera.classList.toggle('hide', inCamera);
-  if (dom.viewIconMap)    dom.viewIconMap.classList.toggle('hide', !inCamera);
 
   // Toggle button visual states
   dom.reflectionToggle.classList.toggle('active', s.reflectionEnabled);
@@ -451,11 +887,20 @@ function updateNowText(s) {
     : getPosition(s.datetime, s.observer.lat, s.observer.lon);
   const alt = p.altitudeDeg;
   const above = alt > 0;
-  dom.sunAlt.textContent = above ? `↑${alt.toFixed(1)}° · ${Math.round(p.azimuthDeg)}°` : `↓${Math.abs(alt).toFixed(1)}°`;
-  dom.sunAlt.classList.toggle('below', !above);
+  if (dom.sunAlt) {
+    dom.sunAlt.textContent = above ? `↑${alt.toFixed(1)}°` : `↓${Math.abs(alt).toFixed(1)}°`;
+    dom.sunAlt.classList.toggle('below', !above);
+  }
+  // Keep the time input's value current so it shows the right time when tapped
+  const ti = document.getElementById('time-exact-input');
+  if (ti && document.activeElement !== ti) {
+    const d = s.datetime;
+    ti.value = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+  }
 }
 
 function tryGeolocate() {
+  stopDrift();
   if (!navigator.geolocation) return;
   navigator.geolocation.getCurrentPosition(
     (pos) => {
