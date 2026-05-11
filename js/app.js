@@ -713,9 +713,17 @@ async function main() {
       if (_skyActive) {
         showSkyView();
         stopDrift();
+        // Hide map arc so it doesn't show through the canvas overlay
+        setSunPathVisible(map, false);
+        setRayLineVisible(map, false);
         renderSkyView(store.get().mode === 'moon');
       } else {
         hideSkyView();
+        const _s = store.get();
+        if (_s.view !== 'camera') {
+          setSunPathVisible(map, true);
+          setRayLineVisible(map, true);
+        }
       }
     });
   }
@@ -872,8 +880,8 @@ function syncChrome(s) {
 
   if (inCamera) showCameraView(); else hideCameraView();
 
-  setSunPathVisible(map, !inCamera);
-  setRayLineVisible(map, !inCamera);
+  setSunPathVisible(map, !inCamera && !_skyActive);
+  setRayLineVisible(map, !inCamera && !_skyActive);
   setBodyColor(map, !inSun);
   setReflectionVisible(map, !inCamera && s.reflectionEnabled);
   setShadowVisible(map, !inCamera);

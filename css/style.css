@@ -64,7 +64,7 @@ input { font-family: inherit; color: inherit; }
 .maplibregl-ctrl-bottom-right,
 .maplibregl-ctrl-top-left,
 .maplibregl-ctrl-top-right { display: none !important; }
-.maplibregl-canvas { outline: none !important; transition: opacity 0.55s ease; filter: brightness(2.0) contrast(1.0); }
+.maplibregl-canvas { outline: none !important; transition: opacity 0.55s ease; filter: brightness(1.6) contrast(1.1); }
 /* Grid mode: fade tiles out, leave dark #map background + DOM markers visible */
 body.grid-mode .maplibregl-canvas { opacity: 0; }
 body.grid-mode .maplibregl-ctrl-bottom-left { display: none !important; }

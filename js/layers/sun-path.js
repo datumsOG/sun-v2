@@ -96,17 +96,17 @@ export function addSunPathLayer(map) {
   // Solid lines with gradient fade at both ends (lineMetrics required for line-gradient).
   map.addLayer({ id: SR_LINE, type: 'line', source: SR_SRC,
     layout: { 'line-cap': 'round' },
-    paint: { 'line-width': 3,
+    paint: { 'line-width': 2.5,
       'line-gradient': ['interpolate', ['linear'], ['line-progress'],
-        0, 'rgba(255,138,61,0)', 0.18, 'rgba(255,138,61,0.95)',
-        0.82, 'rgba(255,138,61,0.95)', 1, 'rgba(255,138,61,0)'] },
+        0, 'rgba(255,138,61,0)', 0.18, 'rgba(255,138,61,0.55)',
+        0.82, 'rgba(255,138,61,0.55)', 1, 'rgba(255,138,61,0)'] },
   });
   map.addLayer({ id: SS_LINE, type: 'line', source: SS_SRC,
     layout: { 'line-cap': 'round' },
-    paint: { 'line-width': 3,
+    paint: { 'line-width': 2.5,
       'line-gradient': ['interpolate', ['linear'], ['line-progress'],
-        0, 'rgba(255,94,61,0)', 0.18, 'rgba(255,94,61,0.95)',
-        0.82, 'rgba(255,94,61,0.95)', 1, 'rgba(255,94,61,0)'] },
+        0, 'rgba(255,94,61,0)', 0.18, 'rgba(255,94,61,0.55)',
+        0.82, 'rgba(255,94,61,0.55)', 1, 'rgba(255,94,61,0)'] },
   });
   map.addLayer({ id: RAY_LINE, type: 'line', source: RAY_SRC,
     layout: { 'line-cap': 'round' },
