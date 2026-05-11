@@ -148,7 +148,7 @@ function _setUndergroundView(sliderNeg) {
     const camLon  = center.lng + horizM * Math.sin(backBrg) / M_PER_LON;
     const camLat  = center.lat + horizM * Math.cos(backBrg) / M_PER_LAT;
     const pos  = maplibregl.MercatorCoordinate.fromLngLat([camLon, camLat], altM);
-    const opts = new maplibregl.FreeCameraOptions();
+    const opts = map.getFreeCameraOptions();
     opts.position = pos;
     // Up vector: MapLibre world Y increases southward, so north = -Y.
     // Rotate up vector by bearing so "up" stays screen-north regardless of map rotation.
@@ -159,16 +159,17 @@ function _setUndergroundView(sliderNeg) {
   }
 }
 
-// Apply the tilt slider: positive → normal setPitch, negative → underground FreeCameraOptions.
+// Apply the tilt slider: slider is 0-170 with 85 as the "flat/zero" point.
+// Values 86-170 → pitch 1-85 (above-ground tilt); values 0-84 → underground view.
 function _applyTiltSlider() {
   if (!dom.tiltSlider) return;
-  const v = +dom.tiltSlider.value;
-  if (v >= 0) {
+  const logical = +dom.tiltSlider.value - 85;  // -85..85
+  if (logical >= 0) {
     _undergroundPitch = 0;
-    try { map.setPitch(v); } catch {}
+    try { map.setPitch(logical); } catch {}
   } else {
-    _undergroundPitch = v;
-    _setUndergroundView(v);
+    _undergroundPitch = logical;
+    _setUndergroundView(logical);
   }
 }
 
@@ -706,7 +707,7 @@ async function main() {
   map.on('pitch', () => {
     if (_driftRafId) return;
     if (_undergroundPitch !== 0) return;
-    if (dom.tiltSlider) dom.tiltSlider.value = String(Math.round(map.getPitch()));
+    if (dom.tiltSlider) dom.tiltSlider.value = String(Math.round(map.getPitch()) + 85);
   });
   // Re-apply underground camera after user pans/zooms/rotates the map
   const _reapplyUnderground = () => { if (_undergroundPitch !== 0) _setUndergroundView(_undergroundPitch); };
@@ -811,7 +812,7 @@ async function main() {
     if (pitch == null || _touching || _undergroundPitch !== 0) return;
     const clamped = Math.max(0, Math.min(map.getMaxPitch ? map.getMaxPitch() : 85, pitch));
     map.setPitch(clamped);
-    if (dom.tiltSlider) dom.tiltSlider.value = String(Math.round(clamped));
+    if (dom.tiltSlider) dom.tiltSlider.value = String(Math.round(clamped) + 85);
   });
 
   store.subscribeAll(throttleRaf((s, changed) => {
@@ -1087,12 +1088,12 @@ function restoreUI(mapInstance) {
   }
   if (saved.tilt != null && dom.tiltSlider) {
     dom.tiltSlider.value = saved.tilt;
-    const tv = +saved.tilt;
-    if (tv >= 0) {
-      try { mapInstance.setPitch(tv); } catch {}
+    const logical = +saved.tilt - 85;  // convert 0-170 back to -85..85
+    if (logical >= 0) {
+      try { mapInstance.setPitch(logical); } catch {}
     } else {
-      _undergroundPitch = tv;
-      // _setUndergroundView can't run yet (map not fully ready), deferred via moveend
+      _undergroundPitch = logical;
+      // _setUndergroundView deferred — fires via moveend once map is ready
     }
   }
   if (saved.radius != null && dom.radiusSlider) {
