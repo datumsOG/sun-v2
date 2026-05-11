@@ -18,6 +18,7 @@ import { initCameraView, showCameraView, hideCameraView, updateCameraView } from
 import { checkAndNotify } from './reminders.js';
 import { initMonitor, captureError } from './monitor.js';
 import { initGrid, setGridEnabled, setGridObserver, setGridImperial } from './layers/grid.js';
+import { initSkyView, showSkyView, hideSkyView, renderSkyView } from './ui/sky-view.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -36,6 +37,7 @@ const dom = {
   bodyIconSun: $('body-icon-sun'),
   bodyIconMoon: $('body-icon-moon'),
   sunAlt: $('sun-alt'),
+  skyViewBtn: $('sky-view-btn'),
   locateBtn: $('locate-btn'),
   compassToggle: $('compass-toggle'),
   reflectionToggle: $('reflection-toggle'),
@@ -94,6 +96,9 @@ function stopDrift() {
   }
   _lastInteract = Date.now();
 }
+
+// Sky view state
+let _skyActive = false;
 
 // Grid mode state
 let _gridActive = false;
@@ -424,8 +429,9 @@ async function main() {
   safe('reflection', () => addReflectionLayer(map));
   safe('target', () => addTargetLayer(map));
   safe('shadow', () => addShadowLayer(map));
-  safe('camera', () => initCameraView());
-  safe('grid',   () => initGrid(map));
+  safe('camera',   () => initCameraView());
+  safe('grid',     () => initGrid(map));
+  safe('sky-view', () => initSkyView());
 
   _initCoordLabels(map);
   const due = checkAndNotify();
@@ -687,6 +693,23 @@ async function main() {
     });
   }
 
+  // Sky view toggle
+  if (dom.skyViewBtn) {
+    dom.skyViewBtn.addEventListener('click', () => {
+      _skyActive = !_skyActive;
+      document.body.classList.toggle('sky-active', _skyActive);
+      dom.skyViewBtn.classList.toggle('active', _skyActive);
+      dom.skyViewBtn.setAttribute('aria-pressed', _skyActive ? 'true' : 'false');
+      if (_skyActive) {
+        showSkyView();
+        stopDrift();
+        renderSkyView(store.get().mode === 'moon');
+      } else {
+        hideSkyView();
+      }
+    });
+  }
+
   // Alignment wizard: crosshair button on control row
   if (dom.alignWizardBtn) {
     dom.alignWizardBtn.addEventListener('click', () => {
@@ -821,6 +844,10 @@ function redraw(s, changed) {
 
   if (targetChanged || observerChanged) {
     try { setTarget(map, s.observer, s.target); } catch (e) { captureError(e, { phase: 'target' }); }
+  }
+
+  if (_skyActive) {
+    try { renderSkyView(moonMode); } catch (e) { captureError(e, { phase: 'skyView' }); }
   }
 }
 

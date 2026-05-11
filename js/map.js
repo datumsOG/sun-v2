@@ -14,7 +14,7 @@ export function initMap(container, center) {
     attributionControl: false,
     dragRotate: true,
     pitchWithRotate: true,
-    maxPitch: 75,
+    maxPitch: 85,
     maxZoom: 24, // allows ~4 m view in grid mode
   });
   if (map.touchPitch && typeof map.touchPitch.enable === 'function') {
