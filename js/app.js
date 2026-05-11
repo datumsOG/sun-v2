@@ -18,7 +18,6 @@ import { initCameraView, showCameraView, hideCameraView, updateCameraView } from
 import { checkAndNotify } from './reminders.js';
 import { initMonitor, captureError } from './monitor.js';
 import { initGrid, setGridEnabled, setGridObserver, setGridImperial } from './layers/grid.js';
-import { initSkyView, showSkyView, hideSkyView, renderSkyView } from './ui/sky-view.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -37,7 +36,6 @@ const dom = {
   bodyIconSun: $('body-icon-sun'),
   bodyIconMoon: $('body-icon-moon'),
   sunAlt: $('sun-alt'),
-  skyViewBtn: $('sky-view-btn'),
   locateBtn: $('locate-btn'),
   compassToggle: $('compass-toggle'),
   reflectionToggle: $('reflection-toggle'),
@@ -79,7 +77,7 @@ const DRIFT_IDLE_MS = 4000; // start after 4 s of no interaction
 function _driftFrame(ts) {
   if (!map) { _driftRafId = null; return; }
   const s = store.get();
-  if (s.view === 'camera' || s.compassEnabled) { _driftRafId = null; return; }
+  if (s.view === 'camera' || s.compassEnabled || _undergroundPitch !== 0) { _driftRafId = null; return; }
   const t = (ts - _driftT0) / 1000;
   const maxP = (map.getMaxPitch && map.getMaxPitch()) || 85;
   const bear = _driftBaseBearing + 2.0 * Math.sin(2 * Math.PI * t / 16);
@@ -98,8 +96,8 @@ function stopDrift() {
   _lastInteract = Date.now();
 }
 
-// Sky view state
-let _skyActive = false;
+// Underground view: negative tilt slider value (0 = normal above-ground view)
+let _undergroundPitch = 0;
 
 // Pause compass bearing/pitch updates while user is touching (panning/zooming)
 // to prevent programmatic setBearing() from interrupting MapLibre's gesture handler.
@@ -124,6 +122,54 @@ function _refreshLayers(map) {
     updateSunNow(map, cur.observer, cur.datetime,
       cur.mode === 'moon' ? getMoonPos(cur.datetime, cur.observer.lat, cur.observer.lon) : null);
   } catch (e) { console.error('layer refresh failed', e); }
+}
+
+// Position camera underground using MapLibre FreeCameraOptions.
+// sliderNeg is a negative value from the tilt slider (e.g. -30 means 30° below map).
+function _setUndergroundView(sliderNeg) {
+  try {
+    const deg   = Math.abs(sliderNeg);
+    const pRad  = (90 + deg) * Math.PI / 180;  // >90° = looking upward through ground
+    const center  = map.getCenter();
+    const bearing = map.getBearing();
+    const bRad    = bearing * Math.PI / 180;
+    const zoom    = map.getZoom();
+    const cosLat  = Math.cos(center.lat * Math.PI / 180);
+    const mPerPx  = 156543.03392 * cosLat / Math.pow(2, zoom);
+    // cameraToCenterDistance is in pixels; convert to metres for placing the camera
+    const camDistPx = (map.transform && map.transform.cameraToCenterDistance) || 820;
+    const camDist   = camDistPx * mPerPx;
+    const horizM  = camDist * Math.sin(pRad);
+    const altM    = camDist * Math.cos(pRad);   // negative when pRad > 90° (underground)
+    const M_PER_LAT = 111195;
+    const M_PER_LON = M_PER_LAT * cosLat;
+    // Place camera behind the map center (opposite bearing direction)
+    const backBrg = ((bearing + 180) % 360) * Math.PI / 180;
+    const camLon  = center.lng + horizM * Math.sin(backBrg) / M_PER_LON;
+    const camLat  = center.lat + horizM * Math.cos(backBrg) / M_PER_LAT;
+    const pos  = maplibregl.MercatorCoordinate.fromLngLat([camLon, camLat], altM);
+    const opts = new maplibregl.FreeCameraOptions();
+    opts.position = pos;
+    // Up vector: MapLibre world Y increases southward, so north = -Y.
+    // Rotate up vector by bearing so "up" stays screen-north regardless of map rotation.
+    opts.lookAtPoint(center, [Math.sin(bRad), -Math.cos(bRad), 0]);
+    map.setFreeCameraOptions(opts);
+  } catch (e) {
+    console.warn('underground view', e);
+  }
+}
+
+// Apply the tilt slider: positive → normal setPitch, negative → underground FreeCameraOptions.
+function _applyTiltSlider() {
+  if (!dom.tiltSlider) return;
+  const v = +dom.tiltSlider.value;
+  if (v >= 0) {
+    _undergroundPitch = 0;
+    try { map.setPitch(v); } catch {}
+  } else {
+    _undergroundPitch = v;
+    _setUndergroundView(v);
+  }
 }
 
 function _enterGrid(map, s) {
@@ -436,7 +482,6 @@ async function main() {
   safe('shadow', () => addShadowLayer(map));
   safe('camera',   () => initCameraView());
   safe('grid',     () => initGrid(map));
-  safe('sky-view', () => initSkyView());
 
   // Pause compass updates while finger is down so drag-pan gestures aren't interrupted
   map.getCanvas().addEventListener('touchstart',  () => { _touching = true;  }, { passive: true });
@@ -637,7 +682,8 @@ async function main() {
   // Vertical sliders (right edge)
   if (dom.tiltSlider) {
     dom.tiltSlider.addEventListener('input', () => {
-      map.setPitch(+dom.tiltSlider.value);
+      stopDrift();
+      _applyTiltSlider();
       saveUI();
     });
   }
@@ -656,11 +702,17 @@ async function main() {
     dom.radiusSlider.addEventListener('input', () => { applyRadius(); saveUI(); });
     applyRadius();
   }
-  // Sync tilt slider when user drags the map (skip during drift)
+  // Sync tilt slider when user drags the map (skip during drift or underground view)
   map.on('pitch', () => {
     if (_driftRafId) return;
+    if (_undergroundPitch !== 0) return;
     if (dom.tiltSlider) dom.tiltSlider.value = String(Math.round(map.getPitch()));
   });
+  // Re-apply underground camera after user pans/zooms/rotates the map
+  const _reapplyUnderground = () => { if (_undergroundPitch !== 0) _setUndergroundView(_undergroundPitch); };
+  map.on('rotate', _reapplyUnderground);
+  map.on('zoomend', _reapplyUnderground);
+  map.on('moveend', _reapplyUnderground);
 
   // Idle drift — stop on any map interaction
   const _onInteract = () => stopDrift();
@@ -699,31 +751,6 @@ async function main() {
         if (_coordLabelCaster)    _coordLabelCaster.hidden    = true;
         if (_coordLabelDatetime)  _coordLabelDatetime.hidden  = true;
         if (_coordLabelEndHeight) _coordLabelEndHeight.hidden = true;
-      }
-    });
-  }
-
-  // Sky view toggle
-  if (dom.skyViewBtn) {
-    dom.skyViewBtn.addEventListener('click', () => {
-      _skyActive = !_skyActive;
-      document.body.classList.toggle('sky-active', _skyActive);
-      dom.skyViewBtn.classList.toggle('active', _skyActive);
-      dom.skyViewBtn.setAttribute('aria-pressed', _skyActive ? 'true' : 'false');
-      if (_skyActive) {
-        showSkyView();
-        stopDrift();
-        // Hide map arc so it doesn't show through the canvas overlay
-        setSunPathVisible(map, false);
-        setRayLineVisible(map, false);
-        renderSkyView(store.get().mode === 'moon');
-      } else {
-        hideSkyView();
-        const _s = store.get();
-        if (_s.view !== 'camera') {
-          setSunPathVisible(map, true);
-          setRayLineVisible(map, true);
-        }
       }
     });
   }
@@ -781,7 +808,7 @@ async function main() {
   });
 
   store.subscribe('compassPitch', (pitch) => {
-    if (pitch == null || _touching) return;
+    if (pitch == null || _touching || _undergroundPitch !== 0) return;
     const clamped = Math.max(0, Math.min(map.getMaxPitch ? map.getMaxPitch() : 85, pitch));
     map.setPitch(clamped);
     if (dom.tiltSlider) dom.tiltSlider.value = String(Math.round(clamped));
@@ -864,9 +891,6 @@ function redraw(s, changed) {
     try { setTarget(map, s.observer, s.target); } catch (e) { captureError(e, { phase: 'target' }); }
   }
 
-  if (_skyActive) {
-    try { renderSkyView(moonMode); } catch (e) { captureError(e, { phase: 'skyView' }); }
-  }
 }
 
 function syncChrome(s) {
@@ -880,8 +904,8 @@ function syncChrome(s) {
 
   if (inCamera) showCameraView(); else hideCameraView();
 
-  setSunPathVisible(map, !inCamera && !_skyActive);
-  setRayLineVisible(map, !inCamera && !_skyActive);
+  setSunPathVisible(map, !inCamera);
+  setRayLineVisible(map, !inCamera);
   setBodyColor(map, !inSun);
   setReflectionVisible(map, !inCamera && s.reflectionEnabled);
   setShadowVisible(map, !inCamera);
@@ -1063,7 +1087,13 @@ function restoreUI(mapInstance) {
   }
   if (saved.tilt != null && dom.tiltSlider) {
     dom.tiltSlider.value = saved.tilt;
-    try { mapInstance.setPitch(+saved.tilt); } catch {}
+    const tv = +saved.tilt;
+    if (tv >= 0) {
+      try { mapInstance.setPitch(tv); } catch {}
+    } else {
+      _undergroundPitch = tv;
+      // _setUndergroundView can't run yet (map not fully ready), deferred via moveend
+    }
   }
   if (saved.radius != null && dom.radiusSlider) {
     // Value is read directly by applyRadius() which runs immediately after restoreUI().

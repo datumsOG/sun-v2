@@ -524,6 +524,10 @@ body.mode-moon .arc-dot {
   background: radial-gradient(circle, #fff1c2, var(--gold) 60%, rgba(255,184,69,0) 100%);
   box-shadow: 0 0 18px 6px rgba(255,184,69,0.6);
 }
+body.mode-moon .arc-dot.head {
+  background: radial-gradient(circle, #f0f3fa, var(--moonblue) 60%, rgba(208,216,232,0) 100%);
+  box-shadow: 0 0 18px 6px rgba(208,216,232,0.5);
+}
 
 /* Shadow-mode 3D markers */
 .caster-sphere {
@@ -550,30 +554,6 @@ body.mode-moon .arc-dot {
 body.mode-moon .shadow-end {
   background: var(--moonblue);
   box-shadow: 0 0 6px rgba(208,216,232,0.5);
-}
-
-/* ===== Sky view (horizon panorama) ===== */
-#sky-view {
-  position: fixed;
-  inset: 0;
-  z-index: 3;
-  display: none;
-  background: #0b0e14;
-  touch-action: none;
-}
-#sky-view canvas { display: block; width: 100%; height: 100%; }
-/* Hide map sliders in sky view — they control map pitch/radius, not useful here */
-body.sky-active .vslider { display: none; }
-/* Sky view button highlight */
-body.sky-active #sky-view-btn {
-  background: var(--gold-soft);
-  color: var(--gold);
-  box-shadow: inset 0 0 0 1px rgba(255,184,69,0.4);
-}
-body.sky-active.mode-moon #sky-view-btn {
-  background: var(--moonblue-soft);
-  color: var(--moonblue);
-  box-shadow: inset 0 0 0 1px rgba(208,216,232,0.4);
 }
 
 /* ===== Toast ===== */

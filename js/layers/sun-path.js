@@ -156,6 +156,18 @@ export function setBodyColor(map, moonMode) {
   dropLineColor = moonMode ? '#d0d8e8' : '#ffb845';
   if (dropLine) dropLine.setAttribute('stroke', dropLineColor);
   if (map && map.getLayer(RAY_LINE)) map.setPaintProperty(RAY_LINE, 'line-color', dropLineColor);
+  if (map && map.getLayer(SR_LINE)) {
+    const [r, g, b] = moonMode ? [208, 216, 232] : [255, 138, 61];
+    map.setPaintProperty(SR_LINE, 'line-gradient', ['interpolate', ['linear'], ['line-progress'],
+      0, `rgba(${r},${g},${b},0)`, 0.18, `rgba(${r},${g},${b},0.55)`,
+      0.82, `rgba(${r},${g},${b},0.55)`, 1, `rgba(${r},${g},${b},0)`]);
+  }
+  if (map && map.getLayer(SS_LINE)) {
+    const [r, g, b] = moonMode ? [208, 216, 232] : [255, 94, 61];
+    map.setPaintProperty(SS_LINE, 'line-gradient', ['interpolate', ['linear'], ['line-progress'],
+      0, `rgba(${r},${g},${b},0)`, 0.18, `rgba(${r},${g},${b},0.55)`,
+      0.82, `rgba(${r},${g},${b},0.55)`, 1, `rgba(${r},${g},${b},0)`]);
+  }
 }
 
 // Ray line is controlled independently so it stays visible in reflection mode.
