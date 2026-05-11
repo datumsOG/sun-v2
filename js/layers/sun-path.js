@@ -213,7 +213,9 @@ function updateAllOffsets() {
   // Density-aware dot sizing: measure average screen-space gap between adjacent dots
   // and shrink dots so they don't overlap when zoomed out.
   let totalGap = 0, gapCount = 0;
-  const screenPts = arcSamples.map(s => mapRef ? mapRef.project([s.lon, s.lat]) : null);
+  const screenPts = arcSamples.map(s => {
+    try { return mapRef ? mapRef.project([s.lon, s.lat]) : null; } catch { return null; }
+  });
   for (let i = 1; i < n; i++) {
     const a = screenPts[i - 1], b = screenPts[i];
     if (a && b && Number.isFinite(a.x) && Number.isFinite(b.x)) {
@@ -393,8 +395,9 @@ function renderDropLine() {
     dropLine.setAttribute('opacity', '0');
     return;
   }
-  const ground = mapRef.project([liveSample.lon, liveSample.lat]);
-  if (!Number.isFinite(ground.x) || !Number.isFinite(ground.y)) {
+  let ground;
+  try { ground = mapRef.project([liveSample.lon, liveSample.lat]); } catch { dropLine.setAttribute('opacity', '0'); return; }
+  if (!Number.isFinite(ground?.x) || !Number.isFinite(ground?.y)) {
     dropLine.setAttribute('opacity', '0');
     return;
   }

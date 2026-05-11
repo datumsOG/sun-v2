@@ -35,7 +35,7 @@ export function initSkyView() {
 
 export function showSkyView() {
   visible = true;
-  if (_el) _el.style.display = '';
+  if (_el) _el.style.display = 'block';
 }
 
 export function hideSkyView() {

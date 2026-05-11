@@ -64,7 +64,7 @@ input { font-family: inherit; color: inherit; }
 .maplibregl-ctrl-bottom-right,
 .maplibregl-ctrl-top-left,
 .maplibregl-ctrl-top-right { display: none !important; }
-.maplibregl-canvas { outline: none !important; transition: opacity 0.55s ease; }
+.maplibregl-canvas { outline: none !important; transition: opacity 0.55s ease; filter: brightness(2.0) contrast(1.0); }
 /* Grid mode: fade tiles out, leave dark #map background + DOM markers visible */
 body.grid-mode .maplibregl-canvas { opacity: 0; }
 body.grid-mode .maplibregl-ctrl-bottom-left { display: none !important; }
@@ -487,10 +487,10 @@ body.view-camera #unit-toggle { display: none !important; }
   border: none;
   box-shadow: 0 1px 4px rgba(0,0,0,0.55);
 }
-.vslider.tilt   { top: calc(10px + var(--safe-top)); height: calc(33vh - 44px); }
-/* Bottom slider: clear the dock + always-visible shadow panel (~265px total).
-   360px buffer ensures the slider thumb never overlaps the dock on any phone. */
-.vslider.radius { top: calc(33vh + 24px); height: calc(67vh - 360px - var(--safe-bottom)); min-height: 20px; }
+/* Both vertical sliders get the same height (50vh - 130px each) with a 20px gap between them.
+   Radius slider bottom clears the dock on all phones (100vh - 240px - safe-bottom). */
+.vslider.tilt   { top: calc(10px + var(--safe-top)); height: calc(50vh - 130px); }
+.vslider.radius { top: calc(50vh - 110px); height: calc(50vh - 130px - var(--safe-bottom)); min-height: 20px; }
 body.view-camera .vslider { display: none; }
 
 /* Hint banner */

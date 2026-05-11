@@ -81,8 +81,9 @@ function _driftFrame(ts) {
   const s = store.get();
   if (s.view === 'camera' || s.compassEnabled) { _driftRafId = null; return; }
   const t = (ts - _driftT0) / 1000;
+  const maxP = (map.getMaxPitch && map.getMaxPitch()) || 85;
   const bear = _driftBaseBearing + 2.0 * Math.sin(2 * Math.PI * t / 16);
-  const pitch = _driftBasePitch + 1.5 * Math.sin(2 * Math.PI * t / 22);
+  const pitch = Math.min(maxP, _driftBasePitch + 1.5 * Math.sin(2 * Math.PI * t / 22));
   try { map.setBearing(bear); } catch {}
   try { map.setPitch(pitch); } catch {}
   _driftRafId = requestAnimationFrame(_driftFrame);
@@ -99,6 +100,10 @@ function stopDrift() {
 
 // Sky view state
 let _skyActive = false;
+
+// Pause compass bearing/pitch updates while user is touching (panning/zooming)
+// to prevent programmatic setBearing() from interrupting MapLibre's gesture handler.
+let _touching = false;
 
 // Grid mode state
 let _gridActive = false;
@@ -433,6 +438,11 @@ async function main() {
   safe('grid',     () => initGrid(map));
   safe('sky-view', () => initSkyView());
 
+  // Pause compass updates while finger is down so drag-pan gestures aren't interrupted
+  map.getCanvas().addEventListener('touchstart',  () => { _touching = true;  }, { passive: true });
+  map.getCanvas().addEventListener('touchend',    () => { _touching = false; }, { passive: true });
+  map.getCanvas().addEventListener('touchcancel', () => { _touching = false; }, { passive: true });
+
   _initCoordLabels(map);
   const due = checkAndNotify();
   if (due.length && Notification.permission !== 'granted') {
@@ -758,13 +768,13 @@ async function main() {
   }
 
   store.subscribe('compassHeading', (heading) => {
-    if (heading == null) return;
+    if (heading == null || _touching) return;
     map.setBearing(heading);
   });
 
   store.subscribe('compassPitch', (pitch) => {
-    if (pitch == null) return;
-    const clamped = Math.max(0, Math.min(map.getMaxPitch ? map.getMaxPitch() : 75, pitch));
+    if (pitch == null || _touching) return;
+    const clamped = Math.max(0, Math.min(map.getMaxPitch ? map.getMaxPitch() : 85, pitch));
     map.setPitch(clamped);
     if (dom.tiltSlider) dom.tiltSlider.value = String(Math.round(clamped));
   });
