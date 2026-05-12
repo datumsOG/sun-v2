@@ -98,6 +98,8 @@ function stopDrift() {
 
 // Underground view: negative tilt slider value (0 = normal above-ground view)
 let _undergroundPitch = 0;
+// Re-entry guard: setFreeCameraOptions can fire moveend, which would loop.
+let _reapplyingUnderground = false;
 
 // Pause compass bearing/pitch updates while user is touching (panning/zooming)
 // to prevent programmatic setBearing() from interrupting MapLibre's gesture handler.
@@ -124,46 +126,44 @@ function _refreshLayers(map) {
   } catch (e) { console.error('layer refresh failed', e); }
 }
 
-// Position camera underground using MapLibre FreeCameraOptions.
-// logical is -1 to -85 (degrees below the flat/neutral point on the tilt slider).
-// Camera is placed underground at a depth scaled to the current arc radius and
-// offset backward from center so that lookAtPoint(center) creates the desired
-// upward elevation angle.
+// Upward-looking view via FreeCameraOptions with pitch > 90°.
+// Camera stays above ground (tiles remain visible below) but tilts past horizontal
+// so the arc geometry appears overhead. Avoids WebGL back-face culling issues.
+// logical is -1 to -85; the absolute value = degrees above horizontal to look.
+//
+// Quaternion derivation (ZX Euler, matches MapLibre's internal pitch/bearing encoding):
+//   q = rotateZ(-bearing) * rotateX(pitch)
+//   With bearing negated and pitch = 90+deg (upward), the closed-form is:
+//   q = [cos(B/2)*sin(P/2), sin(B/2)*sin(P/2), sin(B/2)*cos(P/2), cos(B/2)*cos(P/2)]
+//   Verified: bearing=0°/pitch=90° → [0.707,0,0,0.707] = 90° rotation around X ✓
+//             bearing=90°/pitch=90° → [0.5,0.5,0.5,0.5] = east-facing horizontal ✓
 function _setUndergroundView(logical) {
+  if (_reapplyingUnderground) return;
+  _reapplyingUnderground = true;
+  setTimeout(() => { _reapplyingUnderground = false; }, 120);
   try {
-    const deg      = Math.abs(logical);            // 1..85
-    const elevRad  = deg * Math.PI / 180;
-    const center   = map.getCenter();
-    const bearing  = map.getBearing();
-    const bRad     = bearing * Math.PI / 180;
-    const cosLat   = Math.cos(center.lat * Math.PI / 180);
-    const M_PER_LAT = 111195;
-    const M_PER_LON = M_PER_LAT * cosLat;
+    const deg    = Math.abs(logical);                 // 1..85
+    const bearing = map.getBearing();
+    const bHalf  = bearing * Math.PI / 360;           // bearing / 2 in radians
+    const pHalf  = (90 + deg) * Math.PI / 360;        // (90+deg) / 2 in radians
 
-    // Depth underground = 80% of arc radius (scales with what the user is looking at).
-    const arcR  = getArcRadiusKm() * 1000;          // arc radius in metres
-    const depth = Math.max(80, arcR * 0.8);         // metres underground
+    // Camera at observer position, 2 m above ground — tiles visible below.
+    const obs = store.get().observer;
+    const pos = maplibregl.MercatorCoordinate.fromLngLat([obs.lon, obs.lat], 2);
 
-    // Horizontal offset so that the angle from camera to center = deg above horizontal.
-    // tan(deg) = depth / horizOffset  →  horizOffset = depth / tan(deg)
-    // Capped to 3× arc radius to keep camera inside a sensible map area.
-    const horizOffset = Math.min(depth / Math.tan(elevRad), arcR * 3);
-
-    // Place camera behind center (opposite to bearing) and underground.
-    const backBrg = ((bearing + 180) % 360) * Math.PI / 180;
-    const camLon  = center.lng + horizOffset * Math.sin(backBrg) / M_PER_LON;
-    const camLat  = center.lat + horizOffset * Math.cos(backBrg) / M_PER_LAT;
-
-    const pos  = maplibregl.MercatorCoordinate.fromLngLat([camLon, camLat], -depth);
     const opts = map.getFreeCameraOptions();
     opts.position = pos;
-    // lookAtPoint(center) from underground = looking upward toward the surface.
-    // Up vector keeps bearing-north at screen top.
-    opts.lookAtPoint(center, [Math.sin(bRad), -Math.cos(bRad), 0]);
+    opts.orientation = [
+      Math.cos(bHalf) * Math.sin(pHalf),   // x
+      Math.sin(bHalf) * Math.sin(pHalf),   // y
+      Math.sin(bHalf) * Math.cos(pHalf),   // z
+      Math.cos(bHalf) * Math.cos(pHalf),   // w
+    ];
     map.setFreeCameraOptions(opts);
     document.body.classList.add('underground');
   } catch (e) {
     console.warn('underground view', e);
+    showToast('view err: ' + e.message);
   }
 }
 

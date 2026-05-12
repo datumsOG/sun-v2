@@ -556,10 +556,9 @@ body.mode-moon .shadow-end {
   box-shadow: 0 0 6px rgba(208,216,232,0.5);
 }
 
-/* ===== Underground view ===== */
-/* Tiles are back-face culled from below — canvas goes dark. Lean into it. */
+/* ===== Underground (upward-look) view ===== */
+/* Camera is above ground looking up past horizontal — tiles visible below. */
 body.underground #map { background: #02040a; }
-body.underground .maplibregl-canvas { filter: brightness(0.15) saturate(0.3); }
 
 /* ===== Toast ===== */
 #toast {
