@@ -3,7 +3,7 @@
 import * as store from './state.js';
 import { initMap, whenStyleReady } from './map.js';
 import { addObserverLayer, setObserver } from './layers/observer.js';
-import { addSunPathLayer, updateSunPathDay, updateSunNow, setSunPathVisible, setRayLineVisible, setBodyColor, setArcRadiusKm, getArcSamples, getArcRadiusKm, setGridModeLines } from './layers/sun-path.js';
+import { addSunPathLayer, updateSunPathDay, updateSunNow, setSunPathVisible, setRayLineVisible, setBodyColor, setArcRadiusKm, getArcSamples, getArcRadiusKm, setGridModeLines, setDropSvgVisible } from './layers/sun-path.js';
 import { addReflectionLayer, updateReflectionDay, updateReflectionNow, updateReflectionWall, setReflectionVisible } from './layers/reflection.js';
 import { addTargetLayer, setTarget } from './layers/target.js';
 import { addShadowLayer, updateShadow, setShadowVisible, setShadowHeight, setFloorHeight, getShadowHeight, getFloorHeight, getShadowEndLngLat, getFloorDotLngLat } from './layers/shadow.js';
@@ -126,45 +126,34 @@ function _refreshLayers(map) {
   } catch (e) { console.error('layer refresh failed', e); }
 }
 
-// Upward-looking view via FreeCameraOptions with pitch > 90°.
-// Camera stays above ground (tiles remain visible below) but tilts past horizontal
-// so the arc geometry appears overhead. Avoids WebGL back-face culling issues.
-// logical is -1 to -85; the absolute value = degrees above horizontal to look.
-//
-// Quaternion derivation (ZX Euler, matches MapLibre's internal pitch/bearing encoding):
-//   q = rotateZ(-bearing) * rotateX(pitch)
-//   With bearing negated and pitch = 90+deg (upward), the closed-form is:
-//   q = [cos(B/2)*sin(P/2), sin(B/2)*sin(P/2), sin(B/2)*cos(P/2), cos(B/2)*cos(P/2)]
-//   Verified: bearing=0°/pitch=90° → [0.707,0,0,0.707] = 90° rotation around X ✓
-//             bearing=90°/pitch=90° → [0.5,0.5,0.5,0.5] = east-facing horizontal ✓
+// MapLibre hard-caps pitch at 85° — FreeCameraOptions clamps it too.
+// Workaround: keep the map at max pitch and apply a CSS perspective+rotateX
+// transform to the entire #map container (which includes all Marker DOM elements).
+// This tilts the rendered output past horizontal, giving a "looking up" effect.
+// The drop SVG (fixed in body, outside #map) is hidden to avoid misalignment.
 function _setUndergroundView(logical) {
   if (_reapplyingUnderground) return;
   _reapplyingUnderground = true;
   setTimeout(() => { _reapplyingUnderground = false; }, 120);
+
+  const deg  = Math.abs(logical);                // 1..85
+  // tilt: 0→35° of CSS rotateX as slider sweeps from neutral to max underground.
+  const tilt = Math.round(deg * (35 / 85));
+
+  try { map.setPitch(85); } catch {}
   try {
-    const deg    = Math.abs(logical);                 // 1..85
-    const bearing = map.getBearing();
-    const bHalf  = bearing * Math.PI / 360;           // bearing / 2 in radians
-    const pHalf  = (90 + deg) * Math.PI / 360;        // (90+deg) / 2 in radians
-
-    // Camera at observer position, 2 m above ground — tiles visible below.
     const obs = store.get().observer;
-    const pos = maplibregl.MercatorCoordinate.fromLngLat([obs.lon, obs.lat], 2);
+    map.jumpTo({ center: [obs.lon, obs.lat] });
+  } catch {}
 
-    const opts = map.getFreeCameraOptions();
-    opts.position = pos;
-    opts.orientation = [
-      Math.cos(bHalf) * Math.sin(pHalf),   // x
-      Math.sin(bHalf) * Math.sin(pHalf),   // y
-      Math.sin(bHalf) * Math.cos(pHalf),   // z
-      Math.cos(bHalf) * Math.cos(pHalf),   // w
-    ];
-    map.setFreeCameraOptions(opts);
-    document.body.classList.add('underground');
-  } catch (e) {
-    console.warn('underground view', e);
-    showToast('view err: ' + e.message);
+  const mapEl = document.getElementById('map');
+  if (mapEl) {
+    // transform-origin at 50% 60% keeps the arc geometry centred during tilt.
+    mapEl.style.transformOrigin = '50% 60%';
+    mapEl.style.transform = `perspective(700px) rotateX(${tilt}deg)`;
   }
+  setDropSvgVisible(false);   // drop SVG is body-level, misaligns under CSS transform
+  document.body.classList.add('underground');
 }
 
 // Apply the tilt slider: slider is 0-170 with 85 as the "flat/zero" point.
@@ -175,6 +164,9 @@ function _applyTiltSlider() {
   if (logical >= 0) {
     _undergroundPitch = 0;
     document.body.classList.remove('underground');
+    const mapEl = document.getElementById('map');
+    if (mapEl) { mapEl.style.transform = ''; mapEl.style.transformOrigin = ''; }
+    setDropSvgVisible(true);
     try { map.setPitch(logical); } catch {}
   } else {
     _undergroundPitch = logical;
@@ -718,11 +710,6 @@ async function main() {
     if (_undergroundPitch !== 0) return;
     if (dom.tiltSlider) dom.tiltSlider.value = String(Math.round(map.getPitch()) + 85);
   });
-  // Re-apply underground camera after user pans/zooms/rotates the map
-  const _reapplyUnderground = () => { if (_undergroundPitch !== 0) _setUndergroundView(_undergroundPitch); };
-  map.on('rotate', _reapplyUnderground);
-  map.on('zoomend', _reapplyUnderground);
-  map.on('moveend', _reapplyUnderground);
 
   // Idle drift — stop on any map interaction
   const _onInteract = () => stopDrift();

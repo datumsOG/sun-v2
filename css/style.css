@@ -557,8 +557,12 @@ body.mode-moon .shadow-end {
 }
 
 /* ===== Underground (upward-look) view ===== */
-/* Camera is above ground looking up past horizontal — tiles visible below. */
-body.underground #map { background: #02040a; }
+/* CSS perspective+rotateX on #map container (includes Marker DOM elements).
+   MapLibre's pitch is capped at 85°; this extends the visual tilt past horizontal. */
+body.underground #map {
+  background: #02040a;
+  transition: transform 0.05s linear;
+}
 
 /* ===== Toast ===== */
 #toast {

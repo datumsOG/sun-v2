@@ -141,6 +141,10 @@ export function addSunPathLayer(map) {
   map.on('render', _renderGridLines);
 }
 
+export function setDropSvgVisible(vis) {
+  if (dropSvg) dropSvg.style.display = vis ? '' : 'none';
+}
+
 export function setSunPathVisible(map, vis) {
   visible = vis;
   const v = vis ? 'visible' : 'none';
