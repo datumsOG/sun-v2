@@ -125,35 +125,43 @@ function _refreshLayers(map) {
 }
 
 // Position camera underground using MapLibre FreeCameraOptions.
-// sliderNeg is a negative value from the tilt slider (e.g. -30 means 30° below map).
-function _setUndergroundView(sliderNeg) {
+// logical is -1 to -85 (degrees below the flat/neutral point on the tilt slider).
+// Camera is placed underground at a depth scaled to the current arc radius and
+// offset backward from center so that lookAtPoint(center) creates the desired
+// upward elevation angle.
+function _setUndergroundView(logical) {
   try {
-    const deg   = Math.abs(sliderNeg);
-    const pRad  = (90 + deg) * Math.PI / 180;  // >90° = looking upward through ground
-    const center  = map.getCenter();
-    const bearing = map.getBearing();
-    const bRad    = bearing * Math.PI / 180;
-    const zoom    = map.getZoom();
-    const cosLat  = Math.cos(center.lat * Math.PI / 180);
-    const mPerPx  = 156543.03392 * cosLat / Math.pow(2, zoom);
-    // cameraToCenterDistance is in pixels; convert to metres for placing the camera
-    const camDistPx = (map.transform && map.transform.cameraToCenterDistance) || 820;
-    const camDist   = camDistPx * mPerPx;
-    const horizM  = camDist * Math.sin(pRad);
-    const altM    = camDist * Math.cos(pRad);   // negative when pRad > 90° (underground)
+    const deg      = Math.abs(logical);            // 1..85
+    const elevRad  = deg * Math.PI / 180;
+    const center   = map.getCenter();
+    const bearing  = map.getBearing();
+    const bRad     = bearing * Math.PI / 180;
+    const cosLat   = Math.cos(center.lat * Math.PI / 180);
     const M_PER_LAT = 111195;
     const M_PER_LON = M_PER_LAT * cosLat;
-    // Place camera behind the map center (opposite bearing direction)
+
+    // Depth underground = 80% of arc radius (scales with what the user is looking at).
+    const arcR  = getArcRadiusKm() * 1000;          // arc radius in metres
+    const depth = Math.max(80, arcR * 0.8);         // metres underground
+
+    // Horizontal offset so that the angle from camera to center = deg above horizontal.
+    // tan(deg) = depth / horizOffset  →  horizOffset = depth / tan(deg)
+    // Capped to 3× arc radius to keep camera inside a sensible map area.
+    const horizOffset = Math.min(depth / Math.tan(elevRad), arcR * 3);
+
+    // Place camera behind center (opposite to bearing) and underground.
     const backBrg = ((bearing + 180) % 360) * Math.PI / 180;
-    const camLon  = center.lng + horizM * Math.sin(backBrg) / M_PER_LON;
-    const camLat  = center.lat + horizM * Math.cos(backBrg) / M_PER_LAT;
-    const pos  = maplibregl.MercatorCoordinate.fromLngLat([camLon, camLat], altM);
+    const camLon  = center.lng + horizOffset * Math.sin(backBrg) / M_PER_LON;
+    const camLat  = center.lat + horizOffset * Math.cos(backBrg) / M_PER_LAT;
+
+    const pos  = maplibregl.MercatorCoordinate.fromLngLat([camLon, camLat], -depth);
     const opts = map.getFreeCameraOptions();
     opts.position = pos;
-    // Up vector: MapLibre world Y increases southward, so north = -Y.
-    // Rotate up vector by bearing so "up" stays screen-north regardless of map rotation.
+    // lookAtPoint(center) from underground = looking upward toward the surface.
+    // Up vector keeps bearing-north at screen top.
     opts.lookAtPoint(center, [Math.sin(bRad), -Math.cos(bRad), 0]);
     map.setFreeCameraOptions(opts);
+    document.body.classList.add('underground');
   } catch (e) {
     console.warn('underground view', e);
   }
@@ -166,6 +174,7 @@ function _applyTiltSlider() {
   const logical = +dom.tiltSlider.value - 85;  // -85..85
   if (logical >= 0) {
     _undergroundPitch = 0;
+    document.body.classList.remove('underground');
     try { map.setPitch(logical); } catch {}
   } else {
     _undergroundPitch = logical;
