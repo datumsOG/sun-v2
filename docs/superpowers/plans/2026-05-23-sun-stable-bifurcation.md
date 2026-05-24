@@ -1037,3 +1037,37 @@ Two execution options:
 **1. Subagent-Driven (recommended)** — A subagent runs each task in isolation; the human reviews between tasks. Best when you want frequent checkpoints, especially for the surgical edits in Tasks 3–7.
 
 **2. Inline Execution** — Run tasks in the current session with periodic checkpoints. Faster if you trust the plan and want to watch it go.
+
+---
+
+## Execution outcome (2026-05-23 → 2026-05-24)
+
+Executed inline. All 17 tasks landed. Final sun-stable git history:
+
+```
+2037dc0 feat: pick opening scene by sky state — sun→moon→solar noon   (v03)
+e514547 fix: horizon-tap guard + default tilt 45°                     (v02)
+5b9298b docs: README for stable demo
+387b8db feat: iOS date picker label-for + geolocate fallback + v01
+fdcf12a refactor: simplify tilt slider + strip OUT-feature markup and CSS
+c332388 refactor: strip AR / sky-view / grid / underground wiring from app.js
+d5d32eb chore: remove AR / sky-view / grid / orphans for stable cut
+cec4ea0 chore: fork from sun-v2 @ 4deb1e7 — stable demo lineage starts here
+```
+
+Tagged `v01`, `v02`, `v03`. Both URLs live:
+
+- `https://sun-blair.duckdns.org` → `/home/blair/sun-stable/` (stable demo)
+- `https://experimental-blair.duckdns.org` → `/home/blair/sun-v2/` (this repo, experimental)
+
+### Deviations from the plan
+
+1. **Task 13 (sun-v2 AUDIT.md entry)**: skipped. The experimental repo had a dirty working tree (other in-flight changes), and inserting a bifurcation entry would have entangled this work with it. The full history of the bifurcation lives in this spec + plan + `sun-stable/AUDIT.md`; the experimental `AUDIT.md` can be updated when Blair commits his own WIP.
+2. **Task 17 (push sun-v2 origin)**: skipped. The experimental repo is still 24 commits ahead of origin; pushing them is Blair's call, not part of stable's definition of done.
+3. **iPhone smoke test** surfaced two issues not anticipated by the plan; fixes were applied immediately and tagged as v02 and v03 (see below).
+
+### Post-deploy fixes from iPhone smoke test
+
+**v02 — Horizon-tap guard + softer default tilt.** At high pitch, taps in the upper portion of the screen map to world coordinates kilometres away; tapping there accidentally flung the observer pin across the world. The existing top-of-screen pan guard only blocked drags, not single taps. Added a click-handler guard: when `pitch > 35°` and screen-Y is in the upper 35% of canvas, ignore the click. Default tilt slider dropped from 55° to 45°.
+
+**v03 — Opening scene picker.** App loaded at current time regardless of sky state; opening after sunset showed an empty map with no live body. Added `pickOpeningScene(lat, lon)` called from both `tryGeolocate` paths: sun-above → sun mode at now; sun-below, moon-above → moon mode at now; both below → sun mode at today's solar noon. Imports updated to include `getDayBoundaries` from `solar.js`.
