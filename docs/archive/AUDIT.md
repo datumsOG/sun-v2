@@ -1078,3 +1078,157 @@ Tapping `#time-hh` creates a hidden `<input type="time">` and programmatically c
 - `css/style.css` — Fixes 4, 5; DATA panel styles; alignment wizard styles; time-hh cursor
 - `index.html` — DATA btn, data panel, alignment wizard HTML; bumped to `?v=47`
 - `sw.js` — Cache bumped `v46` → `v47`
+
+---
+
+## Part 22 — v69: Photo-view rebuilt as custom three.js scene (2026-05-20)
+
+v67/v68 photo-view fought MapLibre's camera model and lost. At pitch=85 with zoom 14, MapLibre's camera sits ~6km behind the observer — so "photo-view" was really "looking at the observer from across the city," with the sun arc collapsed to a near-flat line at horizon and no z-axis. CSS underground rotation made it worse, not better, because the projection math didn't compose with the post-render transform.
+
+v69 abandons that approach. Photo-view is now a separate three.js scene rendered into a fullscreen canvas overlay on top of MapLibre, with:
+- Virtual camera at the **yellow dot** (shadow endpoint lat/lon = where the photographer needs to stand), eye height 1.6m above the floor surface
+- Camera position fixed at enter time (anchor); time scrubbing only moves the sun
+- Real ENU-projected positions for the caster, sun ball, arc dots, sky line
+- **Local map tiles as ground texture**: snapshotted at enter time by briefly jumping MapLibre to top-down view over the camera→caster corridor, screenshotting its canvas, restoring MapLibre's state
+- **Corridor fade shader**: ground-plane alpha fades by stadium-shaped distance from the line segment between camera and caster (full opacity inside corridor, smoothstep to 0 outward)
+- Drag = swivel (X→yaw, Y→pitch), pinch = FOV (out=zoom in, in=zoom out)
+- Auto-orient at enter: bearing + pitch toward the caster top
+- Smooth 320ms opacity transition on enter and exit
+
+### New files
+- `js/ui/photo-3d.js` (~430 lines) — the entire 3D scene, gestures, tile-snapshot pipeline, corridor shader
+
+### Removed from `js/app.js`
+- `_photoActive`, `_photoElev`, `_photoSavedPitch/Bearing/Zoom` state
+- `_applyPhotoElev`, `_enterPhotoView`, `_exitPhotoView`, `_initPhotoGestures` functions
+- All guards keyed on `_photoActive` switched to `isPhoto3DActive()` (the three.js scene fully overlays MapLibre, so most guards become no-ops in practice)
+
+### Other v69 changes
+- `js/layers/shadow.js`:
+  - **200ms fade-out** for invalid `endMarker` / `floorDot` / sky line / pole / floor line. Replaced `.remove()` calls with opacity-toggle pattern; markers stay in DOM, fade via CSS `transition: opacity 200ms ease`.
+  - Added `_endValid` / `_floorValid` validity flags so `getShadowEndLngLat()` / `getFloorDotLngLat()` (consumed by photo-3d gating) report null while a marker is fading out.
+  - Helpers: `_showEndMarker()`, `_hideEndMarker()`, `_showFloorDot()`, `_hideFloorDot()`.
+- `js/app.js`:
+  - Imports + initialises `photo-3d` module at boot.
+  - Eye-button (photo-toggle) → `enterPhoto3D` / `exitPhoto3D`; disabled state when `canEnterPhoto3D()` returns false (no valid shadow endpoint).
+  - `redraw()` updates the button's `is-disabled` class per frame based on shadow validity.
+- `css/style.css` — new `.floating-toggle.is-disabled` style (32% opacity, not-allowed cursor).
+- `index.html` — bumped `?v=69`.
+- `sw.js` — cache `v68 → v69`.
+
+### What still doesn't work / deferred
+- **Caster sphere appears at the caster's lat/lon, lifted by `casterH`.** Since the current data model locks caster lat/lon to observer lat/lon, the caster sphere is at the observer position (NOT a separate subject position). User mentioned the CN-Tower-from-200m-away workflow expects caster≠observer. That requires the data model flip discussed and explicitly deferred.
+- **Tile snapshot is static**: captured at enter time, doesn't update when caster height / floor / time changes (the camera position is fixed by anchor so this is mostly fine, but a clean re-snapshot on big state changes would be nice).
+- **Caster pole drawn from caster ground (y=0) up to caster top**; floor offset of camera not visualised below the photographer.
+- **Floor support is partial**: photographer eye at `floorH + 1.6`, but caster ground stays at y=0 (no separate floor surface rendered).
+- **No date/time scrubbing animation**: the sun jumps to its new position when the scrubber moves; could ease.
+
+---
+
+## Part 21 — v68: Photo-view debug pass (2026-05-20)
+
+User testing of v67 surfaced four issues. Diagnoses + fixes:
+
+1. **"Sun arc set at the horizon, fucking up everything."** Not actually a bug in the arc — a fundamental MapLibre constraint. Max pitch is 85° (looking 5° below horizon), so anything above ~5° elevation is off the top of the screen. The existing `_setUndergroundView` CSS rotateX hack scales only to 35° max (line: `tilt = deg * (35/85)`), giving at best ~30° above horizon. For most sun arcs this means the arc dots are clipped off-screen and only the low-altitude ends are visible at the horizon line.
+   **Fix:** Bumped factor from `35/85` → `60/85` so max sky-look reaches ~55° above horizon — enough to cover most mid-latitude sun arcs.
+
+2. **"Compass mode from perspective would be awesome."** Removed the mutex in `_enterPhotoView`. They can coexist: when compass is on, the sensor drives bearing/pitch continuously; when off, drag handlers drive them. No fight because the existing `_touching` guard in the compass subscribers pauses sensor updates while the finger is down.
+
+3. **"Yellow dot where the camera should be / perspective should be from that point."** The yellow dot the user saw is the live sun ball (`liveMarker`, class `arc-dot head`) — it appeared near the observer because the arc was clipped to horizon level (issue 1). The "perspective from that point" complaint is partly that the user wasn't looking at anything interesting on entry — bearing was wherever it had been before, often facing empty horizon.
+   **Fix:** Auto-orient on `_enterPhotoView` — set bearing = current body azimuth, photo-elev = body altitude (clamped to 60° for our underground cap). User pops into photo-view already facing the sun/moon with the arc geometry in frame.
+
+4. **"Smooth on enter, abrupt on exit."** Pure bug: `_exitPhotoView` called `map.setPitch()` / `map.setBearing()` directly. Replaced with `map.easeTo({pitch, bearing, zoom, duration: 600})`. Also saved zoom on entry so we can restore that too.
+
+### Files changed
+- `js/app.js` — bumped underground rotation factor 35°→60°; rewrote `_enterPhotoView` (no compass mutex, auto-orient to body, deferred `_applyPhotoElev` until after `easeTo` settles); rewrote `_exitPhotoView` (smooth `easeTo` for pitch/bearing/zoom); added `_photoSavedZoom` state
+- `index.html` — bumped `?v=68`
+- `sw.js` — Cache `v67 → v68`
+
+### What this enables for the use case
+Entering photo-view now opens with the user already facing the sun/moon. The sky-look range is wider, so they can see arcs that previously fell off-screen. Compass mode can be enabled on top of photo-view for true "hold up phone, see the geometry through it" interaction.
+
+### Still outstanding
+- Marker drift past 30° rotation gets noticeable (pre-existing limitation of the underground CSS hack — markers are inside `#map` so they ride along with the rotation, but body-level SVGs like drop line don't).
+- The MapLibre camera at pitch=85 isn't *at* the observer — it's offset slightly back/up. True eye-position perspective would need a custom camera or three.js. Acceptable for prototype.
+
+---
+
+## Part 20 — v67: Photographer view — drag-to-swivel + pinch zoom (2026-05-20)
+
+**Pivot.** v66's below-view (look up through map from below) was visually epic but the use case didn't justify the work: looking up through a map adds nothing the photographer's-eye view doesn't, and MapLibre Markers stuck on the ceiling killed the geometry-readability that's the whole point. Ripped it out. Replaced with **photographer view** — stand at the observer position, drag to swivel your gaze, pinch to zoom. Same camera model as Google Street View / 360 viewers.
+
+### What changed
+
+1. **v66 below-view scaffolding removed:**
+   - `index.html` — removed `#scene-3d` wrapper, removed `#overlays-3d`, removed `#below-toggle`. `#map` is once again a direct body child.
+   - `css/style.css` — removed `#scene-3d`, `#overlays-3d`, `body.below-view`, `body.below-view .maplibregl-ctrl-bottom-left` rules. Restored `#map { position: fixed }`.
+   - `js/layers/shadow.js`, `js/layers/sun-path.js`, `js/layers/grid.js` — reverted overlay reparenting; SVGs are body children again.
+   - `js/app.js` — removed below-toggle click handler.
+   - `.floating-toggle` CSS class kept; reused by the new photo-toggle button.
+
+2. **Photographer view added.** New floating top-right button (`#photo-toggle`, eye icon). On activate:
+   - Disables `dragPan`, `dragRotate`, `touchPitch`, `touchZoomRotate`, `scrollZoom`, `doubleClickZoom`
+   - flyTo's observer position at pitch=80
+   - Sets `_photoElev = -5` (slight downward gaze), `body.photo-view` class on
+   - Custom gesture handlers (installed once at boot, gated by `_photoActive`):
+     - **Single-touch drag** — `dx → bearing` (direct manipulation: drag right = scene slides right = bearing decreases), `dy → photo-elevation` via new `_applyPhotoElev()` (drag down = scene slides down = camera looks up)
+     - **Two-touch pinch** — log2 ratio → `map.setZoom`
+     - **Mouse drag + wheel** — desktop fallbacks
+   - Sensitivity: 0.28°/px (full screen swipe ≈ 100° rotation)
+   - Mutually exclusive with compass mode (which also drives bearing/pitch)
+   - On exit: restores prior pitch+bearing, re-enables all MapLibre gestures, pops out of underground
+
+3. **`_applyPhotoElev(degAboveHorizon)`** — continuous mapping from photo-elevation angle to MapLibre state, bypassing the existing tilt-slider mapping which has a non-physical discontinuity at the 84↔85 boundary:
+   - `elev ≤ 0` (looking down/horizon): `map.setPitch(85 + elev)`, clear underground
+   - `elev > 0` (looking above horizon): `_setUndergroundView(-elev)` engages existing CSS rotateX hack
+   - Slider value synced for visual feedback only
+
+4. **Guards added:**
+   - `map.on('click')` handler — early return when `_photoActive` so taps don't relocate the observer in photo-view
+   - Top-of-screen pan guard — skipped when `_photoActive` so swipe gestures aren't blocked in the top 28% of the screen
+   - `store.subscribe('observer')` — jumpTo new observer position while in photo-view
+
+### Use case
+Photographer wants to align a subject (e.g. CN Tower) with the setting sun for a shot. Existing top-down view shows alignment numerically/geometrically but doesn't convey the *visual* lineup the photographer will actually see through their lens. Photo-view gives them the eyewitness perspective — "stand at this spot, swivel, see when the sun arc loops around the tower pod." Drives a known-novel long-exposure shot composition (sun-arc-around-tower-pod) that's only obvious from photographer perspective.
+
+### Known limitations (Phase-2.5 work)
+- **Sky line + drop line (body-level SVGs) drift slightly** when looking above horizon — the underground CSS rotateX hack on `#map` doesn't apply to body-level overlays. Pre-existing issue from v62-v65, not introduced here.
+- **Caster sphere is locked to observer lng/lat** by current shadow model — so it appears above the photographer's own position, not at a separate "subject" position. For the CN-Tower-from-200m-away shot, user currently has to use the alignment wizard (separate Point A and Point B). A future iteration could add a draggable subject pin distinct from the observer.
+- **CSS rotateX capped at 35°** by existing `_setUndergroundView` math (`tilt = deg * 35/85`). Limits photo-view sky-look to ~30° above horizon. Adequate for most sun arcs at mid latitudes but could be extended.
+
+### Files changed
+- `index.html` — removed below-view wrappers; replaced `#below-toggle` with `#photo-toggle` (eye icon); bumped `?v=67`
+- `css/style.css` — removed below-view CSS; restored `#map { position: fixed }`; kept `.floating-toggle`
+- `js/layers/shadow.js`, `js/layers/sun-path.js`, `js/layers/grid.js` — reverted overlay reparenting
+- `js/app.js` — removed below-toggle handler; added `_photoActive`/`_photoElev` state, `_applyPhotoElev()`, `_enterPhotoView()`, `_exitPhotoView()`, `_initPhotoGestures()`; wired photo-toggle button; added click + pan-guard + observer-subscribe guards
+- `sw.js` — Cache `v66 → v67`
+
+---
+
+## Part 19 — v66: Below-view 3D prototype (Phase 2 spike) (2026-05-20)
+
+**Goal.** Test feasibility of a true "look up through the map from below" view using CSS `transform-style: preserve-3d`, where body-level SVG overlays float above the (now-ceiling) map plane in genuine 3D space.
+
+### What changed
+
+1. **3D scene wrapper.** `#map` is now wrapped in `#scene-3d` (preserve-3d + perspective). A sibling `#overlays-3d` div sits as a +Z plane (translateZ(140px)) and hosts the lifted SVG overlays.
+2. **Overlay reparenting.** SVG overlays previously appended to `document.body` now mount on `#overlays-3d` when available:
+   - `js/layers/shadow.js` — sky/pole/floor SVG (`svgOverlay`)
+   - `js/layers/sun-path.js` — drop-line SVG + grid-mode SR/SS/RAY mirror SVG
+   - `js/layers/grid.js` — perspective grid SVG
+   Each call retains a body fallback so the change is non-breaking if the wrapper is absent.
+3. **Below-view toggle.** New floating top-right button `#below-toggle`. Adds `body.below-view`, which sets `#scene-3d { transform: rotateX(170deg); }`. While active: forces underground tilt back to neutral (~30° above-ground) since the underground hack transforms `#map` directly and would compose badly with the scene rotateX.
+
+### Known limitations (intentional — Phase-2.5 work)
+- **MapLibre's own markers stay on the map plane.** Arc dots, caster sphere, observer dot, shadow endpoint dot, and floor dot are MapLibre Markers living inside `.maplibregl-canvas-container`. In below-view they appear *on the ceiling with the map tiles*, not floating above the camera. Lifting these to the +Z plane requires re-implementing them outside MapLibre's marker system (or hacking translateZ into their inline styles).
+- **Line/marker alignment in below-view is imperfect.** SVG line coordinates are computed via `mapRef.project()` in 2D screen space against the un-transformed map projection. Drawing those lines on a +Z plane that then gets rotateX'd means the lines render at the right pixel positions on the +Z plane, but those positions don't line up with where map features visually appear under the combined transform.
+- **No gesture mapping yet.** Below-view is on/off only — no adjustable view angle, no orbit. Slider/pan/zoom still act on MapLibre's underlying view.
+
+### Files changed
+- `index.html` — wrapped `#map` in `#scene-3d`; added `#overlays-3d` sibling; added `#below-toggle` button; bumped `?v=66`
+- `css/style.css` — `#scene-3d`, `#map`, `#overlays-3d` rules; `body.below-view #scene-3d` transform; `.floating-toggle` styles
+- `js/layers/shadow.js` — mount `svgOverlay` on `#overlays-3d` (body fallback)
+- `js/layers/sun-path.js` — same for `dropSvg` and `gridLinesSvg`
+- `js/layers/grid.js` — same for `gridSvg`
+- `js/app.js` — wire `#below-toggle` click handler; force tilt to neutral on activate; toast feedback
+- `sw.js` — Cache bumped `v65` → `v66`
